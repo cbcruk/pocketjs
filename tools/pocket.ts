@@ -249,6 +249,17 @@ const targetBackends = {
         `(hosts/pocketbook, cargo zigbuild) and copy both to the device.`,
     );
   },
+  "kobo-glo": async ({ outdir }) => {
+    // Same shape as the PocketBook backend: the Kobo host reads <app>.js +
+    // <app>.pak from its working directory on the device, so `compile` has
+    // already produced everything this step would package. The host ELF is
+    // cross-compiled separately (hosts/kobo, cargo zigbuild against the musl
+    // armhf triple; see hosts/kobo/README.md).
+    console.log(
+      `✓ Kobo bundle ready in ${outdir} — cross-compile the host ` +
+        `(hosts/kobo, cargo zigbuild) and copy both to the device.`,
+    );
+  },
 } satisfies Record<PocketTargetId, TargetBackend>;
 
 await targetBackends[target as PocketTargetId]({

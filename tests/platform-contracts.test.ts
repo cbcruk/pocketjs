@@ -205,11 +205,29 @@ describe("Pocket System v1 schema", () => {
 });
 
 describe("platform registry", () => {
+  // framework/src/touch.ts packs a legacy contact as (id << 18) | (y << 9) | x:
+  // 9 bits per axis, so the largest coordinate a host may report is 511. The
+  // bound is on the COORDINATE, not the extent — a 512-tall viewport reports at
+  // most y=511 and still fits. Any touch target whose logical viewport crossed
+  // this would need the wide form (bit31=1, 10 bits per axis) in its host.
+  test("every touch target's logical viewport fits the legacy touch packing", () => {
+    const LEGACY_MAX_COORD = (1 << 9) - 1;
+    for (const [id, profile] of Object.entries(POCKET_TARGETS)) {
+      if (!profile.capabilities.includes("input.touch")) continue;
+      for (const [w, h] of profile.display.logicalViewports) {
+        expect(`${id}:${w - 1},${h - 1}`).toBe(
+          `${id}:${Math.min(w - 1, LEGACY_MAX_COORD)},${Math.min(h - 1, LEGACY_MAX_COORD)}`,
+        );
+      }
+    }
+  });
+
   test("production advertises only the truthful stock-host profiles", () => {
     expect(Object.keys(POCKET_TARGETS)).toEqual([
       "psp",
       "vita",
       "pocketbook",
+      "kobo-glo",
       "macos-widget",
       "macos-app",
       "linux-app",
@@ -248,6 +266,19 @@ describe("platform registry", () => {
       physicalViewport: [960, 544],
       logicalViewports: [[480, 272]],
       presentations: ["integer-fit"],
+      rasterDensity: 2,
+    });
+    // Kobo Glo: touch only — its power/frontlight keys belong to the
+    // firmware — over a logical viewport that is exactly half the 758x1024
+    // panel on both axes, so the Gray8 rasterizer needs no fractional scale.
+    expect(POCKET_TARGETS["kobo-glo"].capabilities).toEqual([
+      "input.touch",
+      "text.glyphs.baked",
+    ]);
+    expect(POCKET_TARGETS["kobo-glo"].display).toEqual({
+      physicalViewport: [758, 1024],
+      logicalViewports: [[379, 512]],
+      presentations: ["native", "integer-fit"],
       rasterDensity: 2,
     });
     // The desktop widget target: dynamic viewport, real pointer/text/IME,
@@ -541,6 +572,7 @@ describe("semantic resolution", () => {
       music: [true, true, false, true],
       note: [false, false, true, true],
       notifications: [true, true, false, true],
+      "paper-ink": [false, false, false, false], // the kobo-glo e-ink demo: a fixed 379x512 touch surface no stock desktop/console profile admits
       settings: [true, true, false, true],
       stats: [true, true, false, true],
       "vue-sfc-lab": [true, true, false, true],

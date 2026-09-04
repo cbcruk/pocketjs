@@ -185,6 +185,7 @@ describe("experimental Nokia E7 runtime profile", () => {
       "psp",
       "vita",
       "pocketbook",
+      "kobo-glo",
       "macos-widget",
       "macos-app",
       "linux-app",

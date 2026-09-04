@@ -234,6 +234,7 @@ export const POCKET_TARGETS = defineTargetRegistry<PocketCapabilityId, {
   readonly psp: TargetProfile<PocketCapabilityId>;
   readonly vita: TargetProfile<PocketCapabilityId>;
   readonly pocketbook: TargetProfile<PocketCapabilityId>;
+  readonly "kobo-glo": TargetProfile<PocketCapabilityId>;
   readonly "macos-widget": TargetProfile<PocketCapabilityId>;
   readonly "macos-app": TargetProfile<PocketCapabilityId>;
   readonly "linux-app": TargetProfile<PocketCapabilityId>;
@@ -299,6 +300,33 @@ export const POCKET_TARGETS = defineTargetRegistry<PocketCapabilityId, {
       rasterDensity: 2,
     },
     capabilities: ["input.buttons", "input.touch", "text.glyphs.baked"],
+  },
+  // Kobo Glo (Kraken, 2012): a Mark 4 i.MX507 e-reader with a 758×1024
+  // portrait Pearl panel. The logical viewport is exactly half the panel on
+  // both axes, so the Gray8 software rasterizer writes a native-density
+  // surface with no fractional scaling and no letterbox. Both logical axes
+  // stay inside the touch wire's 9-bit ceiling: the largest coordinate a
+  // 379×512 viewport can report is (378, 511) — 512 is the EXTENT, 511 the
+  // maximum coordinate, so the legacy packing still applies and the host
+  // needs no wide-form contact. The Glo's touchscreen is an infrared
+  // (Neonode) single-contact digitizer reporting ABS_X/ABS_Y + BTN_TOUCH
+  // rather than the multitouch protocol, and its only physical keys (power,
+  // frontlight) are reserved by the firmware — hence touch without
+  // input.buttons. Waveform choice is host policy, not an app capability.
+  "kobo-glo": {
+    hostAbi: 5,
+    platform: "kobo",
+    form: "takeover",
+    display: {
+      physicalViewport: [758, 1024],
+      logicalViewports: [[379, 512]],
+      presentations: ["native", "integer-fit"],
+      rasterDensity: 2,
+    },
+    capabilities: [
+      "input.touch",
+      "text.glyphs.baked",
+    ],
   },
   // The flat pocket-widget shell (examples/note-widget is the stock host):
   // a resizable always-on-top window whose logical viewport IS the window,
