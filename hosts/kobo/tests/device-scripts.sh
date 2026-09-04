@@ -1,0 +1,150 @@
+#!/bin/sh
+# Exercise hosts/kobo/device against a staged root and stubbed firmware tools.
+#
+#   hosts/kobo/tests/device-scripts.sh
+#
+# The launcher's contract is that the Kobo UI comes back on every exit path.
+# That is the one thing a first contact with real hardware must not get wrong,
+# and it is checkable without a Kobo: point NICKEL_ROOT at a staged tree, put
+# stub pidof/killall/usleep on PATH, and drive the real scripts.
+
+set -u
+
+DEVICE_DIR="$(cd "$(dirname "$0")/../device" && pwd)"
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+
+FAILURES=0
+
+check() {
+    if [ "$2" = "$3" ]; then
+        echo "ok   $1"
+    else
+        echo "FAIL $1: expected [$2], got [$3]"
+        FAILURES=$((FAILURES + 1))
+    fi
+}
+
+contains() {
+    if grep -q -- "$2" "$3" 2>/dev/null; then
+        echo "ok   $1"
+    else
+        echo "FAIL $1: [$2] not found in $3"
+        FAILURES=$((FAILURES + 1))
+    fi
+}
+
+NICKEL_ROOT="$WORK/root"
+NICKEL_STATE="$WORK/nickel.state"
+export NICKEL_ROOT NICKEL_STATE
+mkdir -p "$NICKEL_ROOT/tmp" "$NICKEL_ROOT/usr/local/Kobo" "$NICKEL_ROOT/etc/init.d"
+
+mkdir -p "$WORK/bin"
+cat >"$WORK/bin/pidof" <<'STUB'
+#!/bin/sh
+[ "$(cat "$NICKEL_STATE")" = running ] || exit 1
+echo 4242
+STUB
+cat >"$WORK/bin/killall" <<'STUB'
+#!/bin/sh
+echo stopped >"$NICKEL_STATE"
+STUB
+cat >"$WORK/bin/usleep" <<'STUB'
+#!/bin/sh
+exit 0
+STUB
+cat >"$NICKEL_ROOT/usr/local/Kobo/nickel" <<'STUB'
+#!/bin/sh
+echo running >"$NICKEL_STATE"
+STUB
+chmod +x "$WORK/bin/pidof" "$WORK/bin/killall" "$WORK/bin/usleep" \
+    "$NICKEL_ROOT/usr/local/Kobo/nickel"
+PATH="$WORK/bin:$PATH"
+export PATH
+
+APP="$WORK/app"
+mkdir -p "$APP/bin"
+cat >"$APP/pocketjs-kobo" <<'STUB'
+#!/bin/sh
+echo "host args: $*"
+exit "${HOST_EXIT:-0}"
+STUB
+cat >"$APP/bin/fbink" <<'STUB'
+#!/bin/sh
+exit 0
+STUB
+chmod +x "$APP/pocketjs-kobo" "$APP/bin/fbink"
+: >"$APP/app.js"
+: >"$APP/app.pak"
+
+POCKETJS_DIR="$APP"
+POCKETJS_LOCK="$WORK/pocketjs.lock"
+export POCKETJS_DIR POCKETJS_LOCK
+
+await_nickel() {
+    # nickel is restarted in the background; give it a moment to land.
+    ticks=0
+    while [ "$(cat "$NICKEL_STATE")" != running ] && [ "$ticks" -lt 40 ]; do
+        sleep 0.05
+        ticks=$((ticks + 1))
+    done
+    cat "$NICKEL_STATE"
+}
+
+launch() {
+    "$DEVICE_DIR/pocketjs.sh" "$@" >"$WORK/out" 2>&1
+    echo $?
+}
+
+echo "-- nickel.sh --"
+echo running >"$NICKEL_STATE"
+check "status reports a running UI" \
+    "nickel: running (pid 4242)" "$("$DEVICE_DIR/nickel.sh" status)"
+check "stop halts the UI" "nickel: stopped" "$("$DEVICE_DIR/nickel.sh" stop)"
+check "stop is idempotent" "nickel: already stopped" "$("$DEVICE_DIR/nickel.sh" stop)"
+"$DEVICE_DIR/nickel.sh" start >/dev/null
+check "start brings the UI back" "running" "$(await_nickel)"
+check "an unknown subcommand is rejected" "2" \
+    "$("$DEVICE_DIR/nickel.sh" bogus 2>/dev/null; echo $?)"
+
+echo "-- pocketjs.sh --"
+echo running >"$NICKEL_STATE"
+check "a clean session exits 0" "0" "$(launch --present-hz 20)"
+check "the UI is restored after a clean session" "running" "$(await_nickel)"
+contains "host options are passed through" "--present-hz 20" "$APP/pocketjs.log"
+contains "the resolved FBInk path is passed" "bin/fbink" "$APP/pocketjs.log"
+check "the lock is released" "gone" \
+    "$([ -d "$POCKETJS_LOCK" ] && echo held || echo gone)"
+
+echo running >"$NICKEL_STATE"
+check "a host failure is propagated" "3" "$(HOST_EXIT=3 launch)"
+check "the UI is restored after a host failure" "running" "$(await_nickel)"
+
+echo running >"$NICKEL_STATE"
+mkdir -p "$POCKETJS_LOCK"
+echo $$ >"$POCKETJS_LOCK/pid"
+check "a second instance is refused" "1" "$(launch)"
+contains "the refusal names the holder" "already running as pid" "$WORK/out"
+check "the refusal leaves the UI up" "running" "$(cat "$NICKEL_STATE")"
+rm -rf "$POCKETJS_LOCK"
+
+echo running >"$NICKEL_STATE"
+mkdir -p "$POCKETJS_LOCK"
+echo 999999 >"$POCKETJS_LOCK/pid"
+check "a stale lock is cleared" "0" "$(launch)"
+
+echo running >"$NICKEL_STATE"
+mv "$APP/bin/fbink" "$WORK/fbink.hidden"
+check "a missing FBInk fails the launch" "1" "$(launch)"
+contains "the failure explains itself" "no FBInk CLI found" "$WORK/out"
+check "the UI is never stopped when the launch fails early" "running" \
+    "$(cat "$NICKEL_STATE")"
+mv "$WORK/fbink.hidden" "$APP/bin/fbink"
+
+echo
+if [ "$FAILURES" -eq 0 ]; then
+    echo "device scripts: all checks passed"
+else
+    echo "device scripts: $FAILURES check(s) failed"
+fi
+exit "$FAILURES"

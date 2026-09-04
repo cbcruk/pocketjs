@@ -143,8 +143,77 @@ impl Calibration {
     }
 }
 
+/// One active contact in every coordinate space the host derives from it.
+///
+/// The runtime only ever needs the logical pair, but a device bring-up session
+/// cannot tell a calibration error from a geometry error without seeing the
+/// raw kernel values that produced it, so `--probe-touch` reports all three.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ContactReport {
+    pub slot: usize,
+    pub raw_x: i32,
+    pub raw_y: i32,
+    pub panel_x: usize,
+    pub panel_y: usize,
+    pub logical_x: u32,
+    pub logical_y: u32,
+}
+
+/// The evdev axis contract of the touchscreen the host selected.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TouchAxes {
+    pub path: String,
+    pub multitouch: bool,
+    pub x_min: i32,
+    pub x_max: i32,
+    pub y_min: i32,
+    pub y_max: i32,
+}
+
+/// Map one raw contact through calibration and geometry.
+///
+/// The order is fixed and observable: swap the axes first, then mirror them.
+/// `--probe-touch` documents that order to the operator because a swap applied
+/// after a flip mirrors the other axis and silently produces a plausible but
+/// wrong calibration.
+fn map_contact(
+    calibration: Calibration,
+    x_range: AxisRange,
+    y_range: AxisRange,
+    slot: usize,
+    contact: Contact,
+    geometry: &Geometry,
+) -> ContactReport {
+    let (mut panel_x, mut panel_y) = if calibration.swap_xy {
+        (
+            normalize(contact.y, y_range, geometry.panel_w),
+            normalize(contact.x, x_range, geometry.panel_h),
+        )
+    } else {
+        (
+            normalize(contact.x, x_range, geometry.panel_w),
+            normalize(contact.y, y_range, geometry.panel_h),
+        )
+    };
+    if calibration.flip_x {
+        panel_x = geometry.panel_w - 1 - panel_x;
+    }
+    if calibration.flip_y {
+        panel_y = geometry.panel_h - 1 - panel_y;
+    }
+    let (logical_x, logical_y) = geometry.panel_to_logical(panel_x, panel_y);
+    ContactReport {
+        slot,
+        raw_x: contact.x,
+        raw_y: contact.y,
+        panel_x,
+        panel_y,
+        logical_x,
+        logical_y,
+    }
+}
+
 struct Device {
-    #[allow(dead_code)]
     path: String,
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     file: File,
@@ -224,6 +293,21 @@ impl Input {
     }
 
     pub fn poll_touches(&mut self, geometry: &Geometry) -> Result<Vec<u32>> {
+        // The framework wire reserves eight bits for contact identity. Linux
+        // MT slots are already stable for a contact's lifetime and this host
+        // caps them at eight, so they cannot collide the way a truncated
+        // kernel tracking id could.
+        Ok(self
+            .poll_reports(geometry)?
+            .into_iter()
+            .map(|report| pack_touch(report.slot as u32, report.logical_x, report.logical_y))
+            .collect())
+    }
+
+    /// Drain the touchscreen and report the active contacts in raw, panel and
+    /// logical coordinates. `poll_touches` is this with the wire packing
+    /// applied; `--probe-touch` consumes the untruncated form.
+    pub fn poll_reports(&mut self, geometry: &Geometry) -> Result<Vec<ContactReport>> {
         for device in &mut self.devices {
             read_events(device)?;
         }
@@ -233,43 +317,51 @@ impl Input {
         let Some(device) = self.devices.first() else {
             return Ok(Vec::new());
         };
-        let mut touches = Vec::new();
-        for (slot, contact) in device
+        Ok(device
             .state
             .contacts
             .iter()
             .enumerate()
             .filter(|(_, contact)| contact.active)
-        {
-            let (mut panel_x, mut panel_y) = if self.calibration.swap_xy {
-                (
-                    normalize(contact.y, device.y_range, geometry.panel_w),
-                    normalize(contact.x, device.x_range, geometry.panel_h),
+            .map(|(slot, contact)| {
+                map_contact(
+                    self.calibration,
+                    device.x_range,
+                    device.y_range,
+                    slot,
+                    *contact,
+                    geometry,
                 )
-            } else {
-                (
-                    normalize(contact.x, device.x_range, geometry.panel_w),
-                    normalize(contact.y, device.y_range, geometry.panel_h),
-                )
-            };
-            if self.calibration.flip_x {
-                panel_x = geometry.panel_w - 1 - panel_x;
-            }
-            if self.calibration.flip_y {
-                panel_y = geometry.panel_h - 1 - panel_y;
-            }
-            let (logical_x, logical_y) = geometry.panel_to_logical(panel_x, panel_y);
-            // The framework wire reserves eight bits for contact identity.
-            // Linux MT slots are already stable for a contact's lifetime and
-            // this host caps them at eight, so they cannot collide the way a
-            // truncated kernel tracking id could.
-            touches.push(pack_touch(slot as u32, logical_x, logical_y));
-        }
-        Ok(touches)
+            })
+            .collect())
     }
 
     pub fn device_count(&self) -> usize {
         self.devices.len()
+    }
+
+    /// The axis contract of the node `grab_selected` would claim, or `None`
+    /// when discovery found no touchscreen.
+    pub fn selected_axes(&self) -> Option<TouchAxes> {
+        self.devices.first().map(|device| TouchAxes {
+            path: device.path.clone(),
+            multitouch: device.state.mt,
+            x_min: device.x_range.min,
+            x_max: device.x_range.max,
+            y_min: device.y_range.min,
+            y_max: device.y_range.max,
+        })
+    }
+
+    /// The calibration currently in force, as the environment variables that
+    /// would reproduce it.
+    pub fn calibration_summary(&self) -> String {
+        format!(
+            "POCKETJS_TOUCH_SWAP_XY={} POCKETJS_TOUCH_FLIP_X={} POCKETJS_TOUCH_FLIP_Y={}",
+            u8::from(self.calibration.swap_xy),
+            u8::from(self.calibration.flip_x),
+            u8::from(self.calibration.flip_y)
+        )
     }
 }
 
@@ -569,6 +661,67 @@ mod tests {
         assert!(state.contacts[0].active);
         state.apply(EV_KEY, BTN_TOUCH, 0);
         assert!(!state.contacts[0].active);
+    }
+
+    fn glo_geometry() -> Geometry {
+        Geometry::exact(379, 512, 2, 758, 1024, None).expect("Glo geometry")
+    }
+
+    fn corner(calibration: Calibration, raw_x: i32, raw_y: i32) -> (u32, u32) {
+        let range = AxisRange { min: 0, max: 1000 };
+        let contact = Contact {
+            active: true,
+            id: 0,
+            x: raw_x,
+            y: raw_y,
+        };
+        let report = map_contact(calibration, range, range, 0, contact, &glo_geometry());
+        (report.logical_x, report.logical_y)
+    }
+
+    #[test]
+    fn calibration_swaps_before_it_mirrors() {
+        // Applying the mirror first would flip the other axis once the swap
+        // moved it, so the two orders disagree wherever both are enabled.
+        let swap_then_flip = Calibration {
+            swap_xy: true,
+            flip_x: true,
+            flip_y: false,
+        };
+        // Raw origin: swapped it is still the origin, then x mirrors to the
+        // far edge while y stays at 0.
+        assert_eq!(corner(swap_then_flip, 0, 0), (378, 0));
+        // Raw x extreme becomes the y extreme after the swap.
+        assert_eq!(corner(swap_then_flip, 1000, 0), (378, 511));
+    }
+
+    #[test]
+    fn identity_calibration_maps_raw_extremes_to_logical_extremes() {
+        let identity = Calibration::default();
+        assert_eq!(corner(identity, 0, 0), (0, 0));
+        assert_eq!(corner(identity, 1000, 1000), (378, 511));
+        assert_eq!(corner(identity, 500, 500), (189, 256));
+    }
+
+    #[test]
+    fn every_probe_report_carries_the_raw_values_that_produced_it() {
+        let report = map_contact(
+            Calibration::default(),
+            AxisRange { min: 0, max: 1000 },
+            AxisRange { min: 0, max: 1000 },
+            3,
+            Contact {
+                active: true,
+                id: 7,
+                x: 250,
+                y: 750,
+            },
+            &glo_geometry(),
+        );
+        assert_eq!(report.slot, 3);
+        assert_eq!((report.raw_x, report.raw_y), (250, 750));
+        assert_eq!((report.panel_x, report.panel_y), (189, 767));
+        assert_eq!((report.logical_x, report.logical_y), (94, 383));
     }
 
     #[test]

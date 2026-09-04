@@ -15,7 +15,7 @@ use anyhow::{Context, Result, bail};
 use damage::{DamageTracker, Rect};
 use framebuffer::Framebuffer;
 use geometry::{Geometry, Rotation, compatible_reported_rotation};
-use input::Input;
+use input::{ContactReport, Input};
 use pocket_mod::Guest;
 use pocket_ui_surface::UiSurface;
 use pocketjs_core::spec;
@@ -41,6 +41,7 @@ struct Args {
     ghost_budget: u32,
     rotation: Option<Rotation>,
     probe: bool,
+    probe_touch: bool,
     allow_active_gui: bool,
 }
 
@@ -61,6 +62,7 @@ impl Args {
                 &std::env::var("POCKETJS_ROTATION").unwrap_or_else(|_| "auto".into()),
             )?,
             probe: false,
+            probe_touch: false,
             allow_active_gui: false,
         };
 
@@ -95,6 +97,7 @@ impl Args {
                 }
                 "--rotation" => args.rotation = Rotation::parse(value(&mut index)?)?,
                 "--probe" => args.probe = true,
+                "--probe-touch" => args.probe_touch = true,
                 "--allow-active-gui" => args.allow_active_gui = true,
                 "-h" | "--help" => {
                     print_help();
@@ -135,6 +138,7 @@ PocketJS Kobo host
 Usage:
   pocketjs-kobo --js app.js --pak app.pak [options]
   pocketjs-kobo --probe [options]
+  pocketjs-kobo --probe-touch [options]
 
 Options:
   --framebuffer PATH       Linux framebuffer (default /dev/fb0)
@@ -143,13 +147,102 @@ Options:
   --motion-waveform DU|A2  fast shallow-refresh waveform (default DU)
   --ghost-budget N         fast updates before a full GC16 cleanup
   --rotation auto|0|90|180|270
+  --probe                  report framebuffer geometry and exit
+  --probe-touch            report live touch coordinates until interrupted
   --allow-active-gui       explicit unsafe override of the nickel-pause guard
 
 SIGHUP reloads JS/pak at the next 60Hz frame boundary. SIGINT/SIGTERM exit.
 The matching environment variables are POCKET_JS, POCKET_PAK,
 POCKETJS_FRAMEBUFFER, POCKETJS_FBINK, POCKETJS_PRESENT_HZ,
-POCKETJS_MOTION_WAVEFORM, POCKETJS_GHOST_BUDGET, and POCKETJS_ROTATION."
+POCKETJS_MOTION_WAVEFORM, POCKETJS_GHOST_BUDGET, and POCKETJS_ROTATION.
+Touch calibration is environment-only and applied in this order:
+POCKETJS_TOUCH_SWAP_XY, then POCKETJS_TOUCH_FLIP_X and POCKETJS_TOUCH_FLIP_Y.
+Use --probe-touch to settle them."
     );
+}
+
+/// Report touch contacts in raw, panel and logical coordinates until the
+/// operator interrupts.
+///
+/// This never writes the framebuffer, so it is safe to run while nickel owns
+/// the panel. It does claim the digitizer exclusively, so a probe tap cannot
+/// also page the Kobo UI underneath.
+fn probe_touch(input: &mut Input, geometry: &Geometry) -> Result<()> {
+    input
+        .grab_selected()
+        .context("claiming the Kobo touchscreen")?;
+    let Some(axes) = input.selected_axes() else {
+        bail!("touchscreen disappeared between the grab and the probe");
+    };
+
+    let max_x = geometry.logical_w - 1;
+    let max_y = geometry.logical_h - 1;
+    println!("PocketJS Kobo touch probe");
+    println!(
+        "  node         {} ({})",
+        axes.path,
+        if axes.multitouch {
+            "multitouch"
+        } else {
+            "single-contact"
+        }
+    );
+    println!(
+        "  raw axes     x={}..{}  y={}..{}",
+        axes.x_min, axes.x_max, axes.y_min, axes.y_max
+    );
+    println!(
+        "  panel        {}x{} ({:?})",
+        geometry.panel_w, geometry.panel_h, geometry.rotation
+    );
+    println!(
+        "  logical      {}x{}, largest coordinate ({max_x}, {max_y})",
+        geometry.logical_w, geometry.logical_h
+    );
+    println!("  calibration  {}", input.calibration_summary());
+    println!();
+    println!("Hold the device upright and tap each corner. Expected logical values:");
+    println!("  top-left      (0, 0)");
+    println!("  top-right     ({max_x}, 0)");
+    println!("  bottom-left   (0, {max_y})");
+    println!("  bottom-right  ({max_x}, {max_y})");
+    println!();
+    println!("If the two logical axes are exchanged, set POCKETJS_TOUCH_SWAP_XY=1.");
+    println!("If logical x counts down where it should count up, set POCKETJS_TOUCH_FLIP_X=1.");
+    println!("If logical y counts down where it should count up, set POCKETJS_TOUCH_FLIP_Y=1.");
+    println!("The runtime swaps before it mirrors: settle the swap, re-run, then the flips.");
+    println!();
+    println!("Ctrl-C to stop.");
+
+    let terminate = Arc::new(AtomicBool::new(false));
+    signal_hook::flag::register(SIGINT, terminate.clone()).context("registering SIGINT")?;
+    signal_hook::flag::register(SIGTERM, terminate.clone()).context("registering SIGTERM")?;
+
+    let mut previous = Vec::<ContactReport>::new();
+    while !terminate.load(Ordering::Relaxed) {
+        let reports = input.poll_reports(geometry)?;
+        if reports != previous {
+            if reports.is_empty() {
+                println!("release");
+            }
+            for report in &reports {
+                println!(
+                    "slot={} raw=({}, {}) panel=({}, {}) logical=({}, {})",
+                    report.slot,
+                    report.raw_x,
+                    report.raw_y,
+                    report.panel_x,
+                    report.panel_y,
+                    report.logical_x,
+                    report.logical_y
+                );
+            }
+            previous = reports;
+        }
+        std::thread::sleep(LOGIC_TICK);
+    }
+    println!("touch probe stopped");
+    Ok(())
 }
 
 struct AppRuntime {
@@ -284,6 +377,9 @@ fn main() -> Result<()> {
         );
         return Ok(());
     }
+    if args.probe_touch {
+        return probe_touch(&mut input, &geometry);
+    }
 
     let gui_paused = std::env::var("POCKETJS_GUI_PAUSED")
         .is_ok_and(|value| matches!(value.as_str(), "1" | "true" | "yes"));
@@ -295,7 +391,7 @@ fn main() -> Result<()> {
         );
     }
 
-    // The Amazon UI may still have the touchscreen open while its renderer is
+    // Nickel may still have the touchscreen open while its renderer is
     // paused. Own the selected evdev node exclusively so one tap cannot be
     // delivered to both runtimes. Device::drop explicitly releases the grab.
     input

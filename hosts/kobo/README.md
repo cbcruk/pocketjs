@@ -89,11 +89,33 @@ It writes `/tmp/paper-ink.pgm` at the full 758×1024 and exits nonzero if the
 frame came out uniform — a bundle that boots but paints nothing otherwise
 looks identical to a working one in the logs.
 
+## Getting a shell
+
+Everything below needs a root shell on the device. Two routes, in order of how
+little they change:
+
+1. **Firmware debug services.** Mount the Kobo over USB and append to
+   `.kobo/Kobo/Kobo eReader.conf`:
+
+   ```ini
+   [DeveloperSettings]
+   EnableDebugServices=true
+   ForceWifiOn=true
+   ```
+
+   Eject, reboot, join Wi-Fi, read the address off *Settings → Device
+   information*, then `telnet <ip>` and log in as `root` with an empty
+   password. Deleting the two lines undoes it.
+2. **KOReader.** Its *Tools → SSH* server is a real SSH daemon, and the same
+   install directory carries the FBInk CLI this host needs (see below), so one
+   install covers both prerequisites.
+
 ## Running on the device
 
 ```sh
 pocketjs-kobo --js app.js --pak app.pak [options]
 pocketjs-kobo --probe            # report fb geometry, format and touch nodes
+pocketjs-kobo --probe-touch      # report live touch coordinates
 ```
 
 | Option | Env | Default |
@@ -105,6 +127,10 @@ pocketjs-kobo --probe            # report fb geometry, format and touch nodes
 | `--ghost-budget N` | `POCKETJS_GHOST_BUDGET` | 80 |
 | `--rotation auto\|0\|90\|180\|270` | `POCKETJS_ROTATION` | `auto` |
 
+Neither probe writes the framebuffer, so both are safe to run while nickel owns
+the panel. `--probe-touch` does claim the digitizer exclusively, so a probe tap
+cannot also page the Kobo UI underneath it.
+
 `SIGHUP` reloads JS/pak at the next 60 Hz frame boundary; `SIGINT`/`SIGTERM`
 exit cleanly after a final refresh.
 
@@ -113,7 +139,16 @@ exit cleanly after a final refresh.
 The host writes pixels itself and shells out to an independently installed
 FBInk CLI for the panel update, so FBInk's per-generation Kobo mxcfb quirks
 never have to be open-coded here. Install FBInk on the device and point
-`--fbink` at it. The host issues:
+`--fbink` at it.
+
+FBInk publishes source tarballs only, and building one means standing up
+[koxtoolchain](https://github.com/koreader/koxtoolchain) first. The shortcut is
+that a KOReader install already ships a Kobo-native `fbink` binary in its own
+directory — `koreader.sh` drives the panel with it — so
+`/mnt/onboard/.adds/koreader/fbink` is the first path `device/pocketjs.sh`
+looks for.
+
+The host issues:
 
 ```sh
 fbink -q -s top=<y>,left=<x>,width=<w>,height=<h> -W <AUTO|DU|A2|GC16> [-f]
@@ -125,12 +160,49 @@ quirks applied*. The host computes that rectangle in the same coordinate space
 it uses to write `/dev/fb0`, so the two should agree — but this is the first
 thing to check if refreshes land in the wrong place.
 
-### Stopping nickel
+### Device scripts
 
 The host refuses to write `/dev/fb0` unless `POCKETJS_GUI_PAUSED=1` is set (or
 `--allow-active-gui` is passed) so it cannot fight the Kobo UI for the panel.
 It also takes `EVIOCGRAB` on the touchscreen so a tap cannot be delivered to
-both runtimes.
+both runtimes. `device/` carries the three scripts that satisfy that contract:
+
+| Script | What |
+| --- | --- |
+| `pocketjs.sh` | Pauses nickel, runs the host, restores nickel on **every** exit path |
+| `nickel.sh` | `stop` / `start` / `status` on their own, for probes and recovery |
+| `diagnose.sh` | Read-only device report; changes nothing, stops nothing |
+
+Deploy them next to the binary and the bundle:
+
+```text
+/mnt/onboard/.apps/pocketjs/
+  pocketjs-kobo   app.js   app.pak
+  pocketjs.sh     nickel.sh   diagnose.sh
+```
+
+```sh
+./pocketjs.sh                                  # defaults
+./pocketjs.sh --motion-waveform A2 --ghost-budget 40   # extra args reach the host
+killall -HUP pocketjs-kobo                     # reload the bundle in place
+```
+
+`pocketjs.sh` copies itself and `nickel.sh` to tmpfs and re-execs there before
+it touches anything, because `/mnt/onboard` is FAT32 and vanishes the moment
+the Kobo is plugged into a computer — if the launcher's own text went with it,
+nickel would never come back. The restore runs from an `EXIT` trap, so a crash,
+a `kill`, or a failed bundle all still return the UI.
+
+The restart sequence follows KOReader's `platform/kobo/nickel.sh`. It
+deliberately leaves Wi-Fi alone where KOReader tears it down: the development
+loop runs over that interface.
+
+`hosts/kobo/tests/device-scripts.sh` drives all of this against a staged root
+with stubbed firmware tools, so the restore path is checkable without a Kobo:
+
+```sh
+hosts/kobo/tests/device-scripts.sh
+```
 
 ## Device tuning checklist
 
@@ -140,7 +212,11 @@ These need the actual hardware and are not settled by this checkout:
    reported bpp/rotation. Kobo's `mxc_epdc` driver reports the orientation
    nickel last set, which is why `geometry.rs` treats `var.rotate` as
    informational and derives orientation from the exact visible raster.
-2. **Touch axes** — `evtest` the node, then set the calibration env vars.
+2. **Touch axes** — `--probe-touch`, then set the calibration env vars. It
+   prints every contact as raw evdev values, panel pixels and logical
+   coordinates at once, so tapping the four corners settles the mapping
+   directly instead of inferring it from `evtest`. The runtime swaps the axes
+   before it mirrors them, so settle the swap, re-run, then decide the flips.
    FBInk's device table records the Glo as `touchSwapAxes=true` and
    `touchMirrorX=true`, i.e. expect to need
    `POCKETJS_TOUCH_SWAP_XY=1 POCKETJS_TOUCH_FLIP_X=1`. Confirm, do not assume.
