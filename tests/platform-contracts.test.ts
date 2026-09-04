@@ -555,6 +555,7 @@ describe("semantic resolution", () => {
       clear: [false, false, false, false], // admitted only by the private ipodtouch4-dev profile (fixed 320x480 portrait touch surface)
       cursor: [true, true, false, true],
       gallery: [true, true, false, true],
+      "hangul-probe": [false, false, false, false], // shares paper-ink's fixed 379x512 kobo-glo touch surface
       hero: [true, true, true, true],
       "hero-vue-sfc": [true, true, false, true],
       "hero-vue-vapor": [true, true, false, true],

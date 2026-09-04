@@ -1,0 +1,30 @@
+{
+  "$schema": "https://pocketjs.dev/schema/pocket-2.json",
+  "pocket": 2,
+  "id": "dev.pocket-stack.hangul-probe",
+  "name": "pocketjs-hangul-probe",
+  "title": "PocketJS: Hangul Probe",
+  "version": "0.1.0",
+  "engine": {
+    "capabilities": {
+      "requires": [
+        "input.touch",
+        "text.glyphs.baked"
+      ]
+    }
+  },
+  "app": {
+    "entry": "apps/hangul-probe/main.tsx",
+    "output": "hangul-probe-main",
+    "framework": "solid",
+    "viewport": {
+      "fixed": {
+        "logical": [
+          379,
+          512
+        ],
+        "presentation": "native"
+      }
+    }
+  }
+}
