@@ -144,7 +144,24 @@ screen changes on a human timescale rather than a frame one — a clock, a
 status board — should go lower; touch registers within one frame either way,
 and a DU waveform takes longer to settle than 100 ms.
 
-`POCKETJS_PROFILE_SECS=N` logs where each tick's time actually goes.
+`POCKETJS_PROFILE_SECS=N` logs where each tick's time actually goes, including
+how many of those ticks repainted anything.
+
+A tick whose draw list is byte-identical to the last one repaints nothing: a
+`DrawList` is one flat `Vec<u32>`, so the check is a memcmp, and the retained
+raster and the caller's pending damage both still stand. Frames are still
+ticked on schedule — virtual time is a frame counter, so dropping one stops
+the guest's clock — they are just cheap. Measured on a Glo running the clock:
+
+| | CPU of one core |
+| --- | --- |
+| 60 Hz, repainting every tick | 14.5% |
+| 30 Hz | 7% |
+| 30 Hz, skipping unchanged frames | 4% |
+
+What is left is `ui.draw()` rebuilding the list every tick, about 1.1 ms of it.
+That is engine-side and shared with every other host. Skipping the `words`
+clone on idle ticks was tried and measured nothing, so it is not in here.
 
 ### The power key
 

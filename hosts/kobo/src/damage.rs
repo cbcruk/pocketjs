@@ -49,6 +49,17 @@ pub struct DamageTracker {
     /// slower e-ink present without scanning the untouched screen.
     candidates: Vec<bool>,
     draw: DrawDamageTracker,
+    /// The draw list the retained raster was produced from.
+    ///
+    /// A DrawList is one flat `Vec<u32>`, so "did anything change" is a
+    /// memcmp — far cheaper than the walk `prepare`/`commit` do, which is
+    /// where an idle tick spent nearly all its time. This assumes the render
+    /// is a pure function of (ui, words); a host whose textures mutate in
+    /// place behind an unchanged draw list would need a different signal.
+    rasterized_words: Vec<u32>,
+    /// False until the first rasterize, so an empty first draw list still
+    /// paints once instead of being mistaken for "unchanged".
+    rasterized: bool,
 }
 
 impl DamageTracker {
@@ -61,6 +72,8 @@ impl DamageTracker {
             density,
             candidates: vec![false; width.div_ceil(TILE) * height.div_ceil(TILE)],
             draw: DrawDamageTracker::new(),
+            rasterized_words: Vec::new(),
+            rasterized: false,
         }
     }
 
@@ -71,7 +84,20 @@ impl DamageTracker {
     /// Incrementally repaint DrawList damage into the persistent Gray8 frame.
     /// Malformed damage metadata conservatively falls back to a complete
     /// raster and invalidates the retained DrawList snapshot.
-    pub fn rasterize(&mut self, ui: &Ui, words: &[u32]) {
+    fn matches(&self, words: &[u32]) -> bool {
+        self.rasterized && self.rasterized_words == words
+    }
+
+    /// Returns false when the draw list is byte-identical to the one already
+    /// on the retained raster, meaning there is nothing to repaint and the
+    /// caller's pending damage still stands.
+    pub fn rasterize(&mut self, ui: &Ui, words: &[u32]) -> bool {
+        if self.matches(words) {
+            return false;
+        }
+        self.rasterized_words.clear();
+        self.rasterized_words.extend_from_slice(words);
+        self.rasterized = true;
         match raster::render_scaled_gray8_incremental(
             ui,
             words,
@@ -88,6 +114,7 @@ impl DamageTracker {
                 self.candidates.fill(true);
             }
         }
+        true
     }
 
     fn mark_candidates(&mut self, regions: &[DamageRect]) {

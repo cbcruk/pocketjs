@@ -345,6 +345,7 @@ fn publish_boot_clock(guest: &Guest) -> Result<()> {
 #[derive(Default)]
 struct Profile {
     ticks: u64,
+    repainted: u64,
     guest: Duration,
     raster: Duration,
     present: Duration,
@@ -361,8 +362,9 @@ impl Profile {
             }
         };
         let report = format!(
-            "{} ticks in {:.1}s — guest {:.1}% ({:.2}ms/tick), raster {:.1}% ({:.2}ms/tick),              present {:.1}%",
+            "{} ticks ({} repainted) in {:.1}s — guest {:.1}% ({:.2}ms/tick), raster {:.1}% ({:.2}ms/tick), present {:.1}%",
             self.ticks,
+            self.repainted,
             window.as_secs_f64(),
             share(self.guest),
             per_tick(self.guest),
@@ -443,7 +445,12 @@ impl AppRuntime {
         })
     }
 
-    fn tick(&mut self, touches: &[u32]) -> Result<Vec<Rect>> {
+    /// `None` when the frame is identical to the last one rasterized: there is
+    /// nothing new to repaint, and whatever damage the caller is still holding
+    /// remains correct. Skipping the raster and the diff is what makes an idle
+    /// tick cheap without dropping a frame — virtual time is a frame counter,
+    /// so the guest still has to be ticked on schedule or its clock stops.
+    fn tick(&mut self, touches: &[u32]) -> Result<Option<Vec<Rect>>> {
         let entered = Instant::now();
         self.guest
             .frame_with_touches(0, spec::ANALOG_CENTER, touches)
@@ -453,12 +460,20 @@ impl AppRuntime {
         self.profile.guest += rastering - entered;
         self.profile.ticks += 1;
         let damage = &mut self.damage;
-        self.surface.with_ui(|ui| {
+        // The clone is not the cost. Skipping it on idle ticks was measured on
+        // a Glo and moved nothing (1.12ms/tick either way): what an idle tick
+        // still pays for is ui.draw() rebuilding the list, which lives in the
+        // engine and is shared with every other host. Asking `matches` first
+        // would only buy a second draw() call on the ticks that do repaint.
+        let repainted = self.surface.with_ui(|ui| {
             let words = ui.draw().words.clone();
-            damage.rasterize(ui, &words);
+            damage.rasterize(ui, &words)
         });
-        let dirty = self.damage.diff();
+        let dirty = repainted.then(|| self.damage.diff());
         self.profile.raster += rastering.elapsed();
+        if repainted {
+            self.profile.repainted += 1;
+        }
         Ok(dirty)
     }
 }
@@ -678,7 +693,9 @@ fn main() -> Result<()> {
             // against the preceding 60Hz simulation frame. This bounds damage
             // while FBInk is busy and lets A -> B -> A disappear before a
             // slower physical present.
-            pending = runtime.tick(&touches)?;
+            if let Some(dirty) = runtime.tick(&touches)? {
+                pending = dirty;
+            }
             next_tick += logic_tick;
             catchup += 1;
         }
