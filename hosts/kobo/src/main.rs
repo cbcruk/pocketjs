@@ -27,8 +27,28 @@ const HOST_ABI: u32 = 5;
 const LOGICAL_W: usize = 379;
 const LOGICAL_H: usize = 512;
 const DENSITY: usize = 2;
-const LOGIC_TICK: Duration = Duration::from_nanos(16_666_667);
+/// Poll cadence for `--probe-touch`, which has no simulation to pace.
+const POLL_TICK: Duration = Duration::from_nanos(16_666_667);
 const MAX_CATCHUP_TICKS: usize = 4;
+/// Core ticks a bundle's realm advances per virtual second (spec FIXED_DT).
+const CORE_TICKS_PER_SECOND: u32 = 60;
+
+/// Virtual frames per second, published to the guest as `__simHz`.
+///
+/// This is a host policy, not app code (docs/DETERMINISM.md), and 60 is the
+/// wrong policy for e-ink: the panel presents at 30 Hz at best and a DU
+/// waveform takes longer than that to settle, so most of those frames can
+/// never reach the glass. It has to divide the core tick rate exactly.
+fn parse_sim_hz(value: &str) -> Result<u32> {
+    let hz: u32 = value.parse().context("--sim-hz must be an integer")?;
+    if hz == 0 || !CORE_TICKS_PER_SECOND.is_multiple_of(hz) {
+        bail!(
+            "--sim-hz must divide {CORE_TICKS_PER_SECOND} exactly \
+             (1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30 or 60); got {hz}"
+        );
+    }
+    Ok(hz)
+}
 
 #[derive(Debug)]
 struct Args {
@@ -40,6 +60,7 @@ struct Args {
     motion_waveform: Waveform,
     ghost_budget: u32,
     rotation: Option<Rotation>,
+    sim_hz: u32,
     probe: bool,
     probe_touch: bool,
     allow_active_gui: bool,
@@ -61,6 +82,10 @@ impl Args {
             rotation: Rotation::parse(
                 &std::env::var("POCKETJS_ROTATION").unwrap_or_else(|_| "auto".into()),
             )?,
+            sim_hz: match std::env::var("POCKETJS_SIM_HZ") {
+                Ok(value) => parse_sim_hz(&value)?,
+                Err(_) => 30,
+            },
             probe: false,
             probe_touch: false,
             allow_active_gui: false,
@@ -96,6 +121,7 @@ impl Args {
                         .context("--ghost-budget must be an integer")?
                 }
                 "--rotation" => args.rotation = Rotation::parse(value(&mut index)?)?,
+                "--sim-hz" => args.sim_hz = parse_sim_hz(value(&mut index)?)?,
                 "--probe" => args.probe = true,
                 "--probe-touch" => args.probe_touch = true,
                 "--allow-active-gui" => args.allow_active_gui = true,
@@ -147,14 +173,18 @@ Options:
   --motion-waveform DU|A2  fast shallow-refresh waveform (default DU)
   --ghost-budget N         fast updates before a full GC16 cleanup
   --rotation auto|0|90|180|270
+  --sim-hz N               virtual frames per second, must divide 60 (default 30)
   --probe                  report framebuffer geometry and exit
   --probe-touch            report live touch coordinates until interrupted
   --allow-active-gui       explicit unsafe override of the nickel-pause guard
 
+Set POCKETJS_PROFILE_SECS=N to log where each logic tick's time goes.
+
 SIGHUP reloads JS/pak at the next 60Hz frame boundary. SIGINT/SIGTERM exit.
 The matching environment variables are POCKET_JS, POCKET_PAK,
 POCKETJS_FRAMEBUFFER, POCKETJS_FBINK, POCKETJS_PRESENT_HZ,
-POCKETJS_MOTION_WAVEFORM, POCKETJS_GHOST_BUDGET, and POCKETJS_ROTATION.
+POCKETJS_MOTION_WAVEFORM, POCKETJS_GHOST_BUDGET, POCKETJS_ROTATION and
+POCKETJS_SIM_HZ.
 Touch calibration is environment-only and applied in this order:
 POCKETJS_TOUCH_SWAP_XY, then POCKETJS_TOUCH_FLIP_X and POCKETJS_TOUCH_FLIP_Y.
 POCKETJS_TOUCH_{{X,Y}}_{{MIN,MAX}} replace the axis extents the digitizer declares,
@@ -240,7 +270,7 @@ fn probe_touch(input: &mut Input, geometry: &Geometry) -> Result<()> {
             }
             previous = reports;
         }
-        std::thread::sleep(LOGIC_TICK);
+        std::thread::sleep(POLL_TICK);
     }
     println!("touch probe stopped");
     Ok(())
@@ -294,14 +324,54 @@ fn publish_boot_clock(guest: &Guest) -> Result<()> {
     Ok(())
 }
 
+/// Where a logic tick's time actually goes.
+///
+/// The loop sleeps to its next deadline, so a busy core means the work inside
+/// a tick is the cost, not the pacing. Guessing which half is expensive on a
+/// 1 GHz ARM running a JS interpreter is how you optimize the wrong one.
+#[derive(Default)]
+struct Profile {
+    ticks: u64,
+    guest: Duration,
+    raster: Duration,
+    present: Duration,
+}
+
+impl Profile {
+    fn drain(&mut self, window: Duration) -> String {
+        let share = |part: Duration| part.as_secs_f64() * 100.0 / window.as_secs_f64().max(1e-9);
+        let per_tick = |part: Duration| {
+            if self.ticks == 0 {
+                0.0
+            } else {
+                part.as_secs_f64() * 1e3 / self.ticks as f64
+            }
+        };
+        let report = format!(
+            "{} ticks in {:.1}s — guest {:.1}% ({:.2}ms/tick), raster {:.1}% ({:.2}ms/tick),              present {:.1}%",
+            self.ticks,
+            window.as_secs_f64(),
+            share(self.guest),
+            per_tick(self.guest),
+            share(self.raster),
+            per_tick(self.raster),
+            share(self.present),
+        );
+        *self = Self::default();
+        report
+    }
+}
+
 struct AppRuntime {
     guest: Guest,
     surface: UiSurface,
     damage: DamageTracker,
+    profile: Profile,
 }
 
 impl AppRuntime {
     fn load(args: &Args, geometry: &Geometry) -> Result<Self> {
+        let sim_hz = args.sim_hz;
         let pak = std::fs::read(&args.pak)
             .with_context(|| format!("reading pak {}", args.pak.display()))?;
         let js = std::fs::read_to_string(&args.js)
@@ -315,6 +385,12 @@ impl AppRuntime {
         surface.feed_pak(&pak);
         let guest = Guest::new().context("creating PocketJS guest")?;
         surface.mount(&guest).context("mounting UI surface")?;
+        // Same contract slot as `__pak`: host policy the bundle latches when it
+        // mounts. Publishing it and then pacing the loop at a different rate
+        // would make the guest's clock disagree with the wall.
+        guest
+            .eval("sim-hz", &format!("globalThis.__simHz = {sim_hz};"))
+            .context("publishing the simulation rate")?;
         publish_boot_clock(&guest)?;
         guest.eval("app", &js).context("evaluating app bundle")?;
         if !guest.has_frame() {
@@ -331,20 +407,26 @@ impl AppRuntime {
                 geometry.render_h,
                 geometry.density as u32,
             ),
+            profile: Profile::default(),
         })
     }
 
     fn tick(&mut self, touches: &[u32]) -> Result<Vec<Rect>> {
+        let entered = Instant::now();
         self.guest
             .frame_with_touches(0, spec::ANALOG_CENTER, touches)
             .context("PocketJS guest frame")?;
         self.surface.tick();
+        let rastering = Instant::now();
+        self.profile.guest += rastering - entered;
+        self.profile.ticks += 1;
         let damage = &mut self.damage;
         self.surface.with_ui(|ui| {
             let words = ui.draw().words.clone();
             damage.rasterize(ui, &words);
         });
         let dirty = self.damage.diff();
+        self.profile.raster += rastering.elapsed();
         Ok(dirty)
     }
 }
@@ -466,7 +548,8 @@ fn main() -> Result<()> {
     signal_hook::flag::register(SIGTERM, terminate.clone()).context("registering SIGTERM")?;
 
     log::info!(
-        "kobo runtime ready: logic=60Hz, present={}Hz, motion={:?}, pid={}",
+        "kobo runtime ready: logic={}Hz, present={}Hz, motion={:?}, pid={}",
+        args.sim_hz,
         args.present_hz,
         args.motion_waveform,
         std::process::id()
@@ -477,6 +560,20 @@ fn main() -> Result<()> {
             PathBuf::from(root).display()
         );
     }
+
+    // Opt-in, because a report every few seconds is noise in a normal log.
+    // The two clock reads per tick cost nothing and are always taken.
+    let profile_every = env_parse::<u64>("POCKETJS_PROFILE_SECS")?
+        .filter(|secs| *secs > 0)
+        .map(Duration::from_secs);
+    let mut profile_window = Instant::now();
+
+    let logic_tick = Duration::from_nanos(1_000_000_000 / u64::from(args.sim_hz));
+    log::info!(
+        "kobo simulation: {}Hz virtual ({} core tick(s) per frame)",
+        args.sim_hz,
+        CORE_TICKS_PER_SECOND / args.sim_hz
+    );
 
     let started = Instant::now();
     let mut next_tick = Instant::now();
@@ -510,7 +607,7 @@ fn main() -> Result<()> {
             // while FBInk is busy and lets A -> B -> A disappear before a
             // slower physical present.
             pending = runtime.tick(&touches)?;
-            next_tick += LOGIC_TICK;
+            next_tick += logic_tick;
             catchup += 1;
         }
         if catchup > 0 && first_frame {
@@ -524,9 +621,16 @@ fn main() -> Result<()> {
         }
         if catchup == MAX_CATCHUP_TICKS && Instant::now() >= next_tick {
             log::warn!("kobo runtime missed >{MAX_CATCHUP_TICKS} logic ticks; dropping catch-up");
-            next_tick = Instant::now() + LOGIC_TICK;
+            next_tick = Instant::now() + logic_tick;
         }
 
+        if profile_every.is_some_and(|interval| profile_window.elapsed() >= interval) {
+            let window = profile_window.elapsed();
+            log::info!("kobo profile: {}", runtime.profile.drain(window));
+            profile_window = Instant::now();
+        }
+
+        let presenting = Instant::now();
         if fbink.ready()? {
             let elapsed = started.elapsed();
             if !pending.is_empty() {
@@ -551,6 +655,7 @@ fn main() -> Result<()> {
                 fbink.submit(request)?;
             }
         }
+        runtime.profile.present += presenting.elapsed();
 
         let now = Instant::now();
         if next_tick > now {
@@ -563,4 +668,23 @@ fn main() -> Result<()> {
         .context("finishing the final Kobo display refresh")?;
     log::info!("kobo runtime exiting cleanly");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_sim_hz;
+
+    #[test]
+    fn the_simulation_rate_must_divide_the_core_tick_rate() {
+        for hz in [1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30, 60] {
+            assert_eq!(parse_sim_hz(&hz.to_string()).unwrap(), hz);
+        }
+        // A rate that does not divide 60 would leave a fractional number of
+        // core ticks per frame, which the realm cannot advance.
+        for hz in ["0", "7", "45", "61"] {
+            let error = parse_sim_hz(hz).unwrap_err().to_string();
+            assert!(error.contains("must divide 60 exactly"), "{hz}: {error}");
+        }
+        assert!(parse_sim_hz("nope").is_err());
+    }
 }

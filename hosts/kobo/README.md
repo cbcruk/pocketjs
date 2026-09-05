@@ -126,6 +126,25 @@ pocketjs-kobo --probe-touch      # report live touch coordinates
 | `--motion-waveform DU\|A2` | `POCKETJS_MOTION_WAVEFORM` | `DU` |
 | `--ghost-budget N` | `POCKETJS_GHOST_BUDGET` | 80 |
 | `--rotation auto\|0\|90\|180\|270` | `POCKETJS_ROTATION` | `auto` |
+| `--sim-hz N` | `POCKETJS_SIM_HZ` | 30 |
+
+`--sim-hz` is the virtual frame rate published to the guest as `__simHz`, and
+it must divide 60. Simulating faster than the panel can present is provably
+wasted work: measured on a Glo, the cost is linear in the rate and per-tick
+cost is flat.
+
+| `--sim-hz` | CPU of one core | per tick |
+| --- | --- | --- |
+| 60 | 14.5% | 2.2 ms |
+| 30 | 7% | 2.2 ms |
+| 10 | 2% | 2.3 ms |
+
+30 is the default because the panel presents at 30 Hz at best. An app whose
+screen changes on a human timescale rather than a frame one — a clock, a
+status board — should go lower; touch registers within one frame either way,
+and a DU waveform takes longer to settle than 100 ms.
+
+`POCKETJS_PROFILE_SECS=N` logs where each tick's time actually goes.
 
 Neither probe writes the framebuffer, so both are safe to run while nickel owns
 the panel. `--probe-touch` does claim the digitizer exclusively, so a probe tap
