@@ -20,6 +20,7 @@ const EV_ABS: u16 = 0x03;
 const SYN_REPORT: u16 = 0;
 const SYN_DROPPED: u16 = 3;
 const BTN_TOUCH: u16 = 0x14a;
+const KEY_POWER: u16 = 116;
 const ABS_X: u16 = 0x00;
 const ABS_Y: u16 = 0x01;
 const ABS_MT_SLOT: u16 = 0x2f;
@@ -331,8 +332,27 @@ impl Drop for Device {
     }
 }
 
+/// An edge on the power key.
+///
+/// Value 2 (autorepeat) is dropped: a held key is one press, and the length of
+/// the hold is what distinguishes sleeping from quitting.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PowerKey {
+    Pressed,
+    Released,
+}
+
+/// The node reporting `KEY_POWER`. On a Kobo that is the vestigial keypad
+/// (`mxckpd`), not the digitizer — a separate device from the touchscreen.
+struct KeyDevice {
+    path: String,
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    file: File,
+}
+
 pub struct Input {
     devices: Vec<Device>,
+    power: Option<KeyDevice>,
     calibration: Calibration,
 }
 
@@ -359,10 +379,26 @@ impl Input {
                 device.y_range = y_range;
             }
         }
+        let power = discover_power_device();
+        match &power {
+            Some(device) => log::info!("kobo input: power key on {}", device.path),
+            None => log::info!("kobo input: no power key found; the host cannot sleep itself"),
+        }
         Ok(Self {
             devices,
+            power,
             calibration: Calibration::from_env(),
         })
+    }
+
+    /// Drain the power key and report its edges. Never grabbed: the host is
+    /// not trying to keep the key from anyone, and while it runs there is
+    /// nobody else reading it.
+    pub fn poll_power(&mut self) -> Result<Vec<PowerKey>> {
+        let Some(device) = self.power.as_mut() else {
+            return Ok(Vec::new());
+        };
+        read_key_events(device)
     }
 
     /// Take exclusive ownership of the touchscreen selected by capability
@@ -541,6 +577,68 @@ fn discover_devices() -> Result<Vec<Device>> {
 }
 
 #[cfg(target_os = "linux")]
+fn discover_power_device() -> Option<KeyDevice> {
+    use std::fs::OpenOptions;
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let mut paths = std::fs::read_dir("/dev/input")
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("event"))
+        })
+        .collect::<Vec<_>>();
+    paths.sort();
+
+    for path in paths {
+        let Ok(file) = OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC)
+            .open(&path)
+        else {
+            continue;
+        };
+        if has_event_code(file.as_raw_fd(), EV_KEY, KEY_POWER) {
+            return Some(KeyDevice {
+                path: path.display().to_string(),
+                file,
+            });
+        }
+    }
+    None
+}
+
+#[cfg(not(target_os = "linux"))]
+fn discover_power_device() -> Option<KeyDevice> {
+    None
+}
+
+#[cfg(target_os = "linux")]
+fn read_key_events(device: &mut KeyDevice) -> Result<Vec<PowerKey>> {
+    let mut edges = Vec::new();
+    for event in drain_events(&device.file, &device.path)? {
+        if event.0 == EV_KEY && event.1 == KEY_POWER {
+            match event.2 {
+                1 => edges.push(PowerKey::Pressed),
+                0 => edges.push(PowerKey::Released),
+                _ => {}
+            }
+        }
+    }
+    Ok(edges)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn read_key_events(_device: &mut KeyDevice) -> Result<Vec<PowerKey>> {
+    Ok(Vec::new())
+}
+
+#[cfg(target_os = "linux")]
 fn read_abs_range(fd: libc::c_int, axis: u16) -> Option<AxisRange> {
     #[repr(C)]
     #[derive(Clone, Copy, Default)]
@@ -607,8 +705,13 @@ fn set_evdev_grab(fd: libc::c_int, grab: bool) -> Result<()> {
     Ok(())
 }
 
+/// Drain one nonblocking evdev node into `(type, code, value)` triples.
+///
+/// Shared by the digitizer and the power key: the record layout and the
+/// partial-read handling are a property of the kernel ABI, not of what the
+/// node happens to report.
 #[cfg(target_os = "linux")]
-fn read_events(device: &mut Device) -> Result<()> {
+fn drain_events(file: &File, path: &str) -> Result<Vec<(u16, u16, i32)>> {
     use std::mem::size_of;
     use std::os::fd::AsRawFd;
 
@@ -622,17 +725,12 @@ fn read_events(device: &mut Device) -> Result<()> {
     }
 
     let event_size = size_of::<InputEvent>();
+    let mut events = Vec::new();
     let mut bytes = [0u8; 64 * 24];
     loop {
         // SAFETY: `bytes` is writable for its full declared length and fd is
         // nonblocking. The kernel writes a sequence of input_event records.
-        let count = unsafe {
-            libc::read(
-                device.file.as_raw_fd(),
-                bytes.as_mut_ptr().cast(),
-                bytes.len(),
-            )
-        };
+        let count = unsafe { libc::read(file.as_raw_fd(), bytes.as_mut_ptr().cast(), bytes.len()) };
         if count < 0 {
             let error = std::io::Error::last_os_error();
             if error.kind() == std::io::ErrorKind::WouldBlock {
@@ -646,7 +744,8 @@ fn read_events(device: &mut Device) -> Result<()> {
         let count = count as usize;
         if count % event_size != 0 {
             log::warn!(
-                "kobo input: ignored partial event read of {count} bytes (record {event_size})"
+                "kobo input: {path} ignored partial event read of {count} bytes \
+                 (record {event_size})"
             );
         }
         for chunk in bytes[..count - count % event_size].chunks_exact(event_size) {
@@ -654,16 +753,22 @@ fn read_events(device: &mut Device) -> Result<()> {
             // imposing alignment on the byte buffer.
             let event = unsafe { chunk.as_ptr().cast::<InputEvent>().read_unaligned() };
             log::debug!(
-                "kobo input event: type={} code={} value={} record_size={event_size}",
+                "kobo input event: {path} type={} code={} value={}",
                 event.type_,
                 event.code,
                 event.value
             );
-            if device.state.apply(event.type_, event.code, event.value) {
-                log::warn!(
-                    "kobo input: event stream dropped; cleared contacts and resynchronizing"
-                );
-            }
+            events.push((event.type_, event.code, event.value));
+        }
+    }
+    Ok(events)
+}
+
+#[cfg(target_os = "linux")]
+fn read_events(device: &mut Device) -> Result<()> {
+    for (type_, code, value) in drain_events(&device.file, &device.path)? {
+        if device.state.apply(type_, code, value) {
+            log::warn!("kobo input: event stream dropped; cleared contacts and resynchronizing");
         }
     }
     Ok(())
@@ -896,6 +1001,7 @@ mod tests {
     fn runtime_requires_a_discoverable_touchscreen() {
         let mut input = Input {
             devices: Vec::new(),
+            power: None,
             calibration: Calibration::default(),
         };
         let error = input.grab_selected().unwrap_err().to_string();

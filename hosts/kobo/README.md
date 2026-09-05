@@ -146,6 +146,26 @@ and a DU waveform takes longer to settle than 100 ms.
 
 `POCKETJS_PROFILE_SECS=N` logs where each tick's time actually goes.
 
+### The power key
+
+Nickel normally owns the power button, so with nickel paused a press does
+nothing — which is why a running session can look like a hung device. The host
+reads `KEY_POWER` off the vestigial keypad node (`mxckpd`, separate from the
+digitizer) and acts on release, because there is no way to tell the user what a
+hold is about to do while it is happening:
+
+| Press | Effect |
+| --- | --- |
+| Short | `power.sh suspend`, then a reload |
+| Held 1.5s or more | Exit, so the launcher's trap hands nickel back |
+
+The reload after a resume is not incidental. Virtual time is a frame counter,
+so it does not advance while the machine is down; republishing the boot clock
+is the only way a calendar app comes back showing the right hour.
+
+`--no-power-key` opts out. Sleeping is device policy rather than rendering, so
+it lives in a shell script for the same reason the panel update does.
+
 Neither probe writes the framebuffer, so both are safe to run while nickel owns
 the panel. `--probe-touch` does claim the digitizer exclusively, so a probe tap
 cannot also page the Kobo UI underneath it.
@@ -192,6 +212,7 @@ both runtimes. `device/` carries the three scripts that satisfy that contract:
 | `nickel.sh` | `stop` / `start` / `status` on their own, for probes and recovery |
 | `diagnose.sh` | Read-only device report; changes nothing, stops nothing |
 | `wifi.sh` | `up` / `down` / `status` — the network without nickel |
+| `power.sh` | `suspend` / `status` — sleep, and put the device back together |
 
 Deploy them next to the binary and the bundle:
 

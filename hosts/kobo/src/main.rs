@@ -15,7 +15,7 @@ use anyhow::{Context, Result, bail};
 use damage::{DamageTracker, Rect};
 use framebuffer::Framebuffer;
 use geometry::{Geometry, Rotation, compatible_reported_rotation};
-use input::{ContactReport, Input};
+use input::{ContactReport, Input, PowerKey};
 use pocket_mod::Guest;
 use pocket_ui_surface::UiSurface;
 use pocketjs_core::spec;
@@ -30,6 +30,10 @@ const DENSITY: usize = 2;
 /// Poll cadence for `--probe-touch`, which has no simulation to pace.
 const POLL_TICK: Duration = Duration::from_nanos(16_666_667);
 const MAX_CATCHUP_TICKS: usize = 4;
+/// Held at least this long, the power key means "give me the device back"
+/// rather than "sleep". Judged on release, so a hold is never ambiguous while
+/// it is happening — there is no way to tell the user what it is about to do.
+const POWER_LONG_PRESS: Duration = Duration::from_millis(1500);
 /// Core ticks a bundle's realm advances per virtual second (spec FIXED_DT).
 const CORE_TICKS_PER_SECOND: u32 = 60;
 
@@ -61,6 +65,7 @@ struct Args {
     ghost_budget: u32,
     rotation: Option<Rotation>,
     sim_hz: u32,
+    power_helper: Option<PathBuf>,
     probe: bool,
     probe_touch: bool,
     allow_active_gui: bool,
@@ -86,6 +91,10 @@ impl Args {
                 Ok(value) => parse_sim_hz(&value)?,
                 Err(_) => 30,
             },
+            power_helper: Some(
+                env_path("POCKETJS_POWER_HELPER")
+                    .unwrap_or_else(|| "/mnt/onboard/.apps/pocketjs/power.sh".into()),
+            ),
             probe: false,
             probe_touch: false,
             allow_active_gui: false,
@@ -122,6 +131,8 @@ impl Args {
                 }
                 "--rotation" => args.rotation = Rotation::parse(value(&mut index)?)?,
                 "--sim-hz" => args.sim_hz = parse_sim_hz(value(&mut index)?)?,
+                "--power-helper" => args.power_helper = Some(value(&mut index)?.into()),
+                "--no-power-key" => args.power_helper = None,
                 "--probe" => args.probe = true,
                 "--probe-touch" => args.probe_touch = true,
                 "--allow-active-gui" => args.allow_active_gui = true,
@@ -174,6 +185,8 @@ Options:
   --ghost-budget N         fast updates before a full GC16 cleanup
   --rotation auto|0|90|180|270
   --sim-hz N               virtual frames per second, must divide 60 (default 30)
+  --power-helper PATH      script run as `PATH suspend` on a short power press
+  --no-power-key           ignore the power key entirely
   --probe                  report framebuffer geometry and exit
   --probe-touch            report live touch coordinates until interrupted
   --allow-active-gui       explicit unsafe override of the nickel-pause guard
@@ -362,6 +375,25 @@ impl Profile {
     }
 }
 
+/// Run the suspend helper and wait for the machine to come back.
+///
+/// Sleeping is device policy, not rendering, so it lives in a shell script for
+/// the same reason the panel update does — the tested sequence stays in one
+/// place and this host does not re-derive it. The call blocks: the system is
+/// going down mid-call and returns from the same line on the way out.
+fn suspend_through(helper: &std::path::Path) -> Result<()> {
+    log::info!("kobo power: suspending via {}", helper.display());
+    let status = std::process::Command::new(helper)
+        .arg("suspend")
+        .status()
+        .with_context(|| format!("running {} suspend", helper.display()))?;
+    if !status.success() {
+        bail!("{} suspend exited with {status}", helper.display());
+    }
+    log::info!("kobo power: resumed");
+    Ok(())
+}
+
 struct AppRuntime {
     guest: Guest,
     surface: UiSurface,
@@ -547,6 +579,16 @@ fn main() -> Result<()> {
     signal_hook::flag::register(SIGINT, terminate.clone()).context("registering SIGINT")?;
     signal_hook::flag::register(SIGTERM, terminate.clone()).context("registering SIGTERM")?;
 
+    match args.power_helper.as_deref() {
+        Some(helper) if helper.exists() => {
+            log::info!("kobo power: short press sleeps via {}", helper.display())
+        }
+        Some(helper) => log::warn!(
+            "kobo power: {} is missing; a short press will do nothing",
+            helper.display()
+        ),
+        None => log::info!("kobo power: key ignored (--no-power-key)"),
+    }
     log::info!(
         "kobo runtime ready: logic={}Hz, present={}Hz, motion={:?}, pid={}",
         args.sim_hz,
@@ -580,6 +622,7 @@ fn main() -> Result<()> {
     let mut pending = Vec::<Rect>::new();
     let mut first_frame = true;
     let mut force_refresh = false;
+    let mut power_pressed_at: Option<Instant> = None;
 
     while !terminate.load(Ordering::Relaxed) {
         if reload.swap(false, Ordering::AcqRel) {
@@ -595,6 +638,30 @@ fn main() -> Result<()> {
                 }
                 Err(error) => {
                     log::error!("kobo reload rejected; keeping previous guest: {error:#}");
+                }
+            }
+        }
+
+        for edge in input.poll_power()? {
+            match edge {
+                PowerKey::Pressed => power_pressed_at = Some(Instant::now()),
+                PowerKey::Released => {
+                    let held = power_pressed_at.take().map(|at| at.elapsed());
+                    let Some(held) = held else { continue };
+                    if held >= POWER_LONG_PRESS {
+                        log::info!("kobo power: held {held:?}; handing the device back");
+                        terminate.store(true, Ordering::Release);
+                    } else if let Some(helper) = args.power_helper.as_deref() {
+                        if let Err(error) = suspend_through(helper) {
+                            log::error!("kobo power: {error:#}");
+                        }
+                        // Virtual time is a frame counter, so it did not
+                        // advance while the machine was down. Reloading
+                        // republishes the boot clock, which is the only way a
+                        // calendar app comes back showing the right hour.
+                        reload.store(true, Ordering::Release);
+                        next_tick = Instant::now();
+                    }
                 }
             }
         }
