@@ -131,6 +131,34 @@ check "WIFI_MODULE_PATH names a real platform" "ok" \
     "$(grep -q '^WIFI_MODULE_PATH=.*/drivers/mx50-ntx/wifi/dhd.ko$' "$NICKEL_ENV_SEEN" &&
         echo ok || echo "$(grep '^WIFI_MODULE_PATH=' "$NICKEL_ENV_SEEN")")"
 
+echo "-- nickel.sh keeps the network --"
+# dhcpcd deconfigures its interface on SIGTERM, so stopping the UI must not
+# touch it: that is how a session drops off the network it arrived on.
+echo running >"$NICKEL_STATE"
+: >"$WORK/killed"
+cat >"$WORK/bin/killall" <<'STUB'
+#!/bin/sh
+for arg in "$@"; do
+    case "$arg" in
+        -*) ;;
+        *) echo "$arg" >>"$KILLED_LOG" ;;
+    esac
+done
+echo stopped >"$NICKEL_STATE"
+STUB
+chmod +x "$WORK/bin/killall"
+KILLED_LOG="$WORK/killed"
+export KILLED_LOG
+"$DEVICE_DIR/nickel.sh" stop >/dev/null
+check "stopping the UI spares dhcpcd" "spared" \
+    "$(grep -qx dhcpcd "$KILLED_LOG" && echo killed || echo spared)"
+contains "stopping the UI still kills nickel" "^nickel$" "$KILLED_LOG"
+: >"$KILLED_LOG"
+"$DEVICE_DIR/nickel.sh" start >/dev/null
+check "restarting hands dhcpcd back to nickel" "killed" \
+    "$(grep -qx dhcpcd "$KILLED_LOG" && echo killed || echo spared)"
+await_nickel >/dev/null
+
 echo "-- pocketjs.sh --"
 echo running >"$NICKEL_STATE"
 check "a clean session exits 0" "0" "$(launch --present-hz 20)"

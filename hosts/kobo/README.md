@@ -191,6 +191,7 @@ both runtimes. `device/` carries the three scripts that satisfy that contract:
 | `pocketjs.sh` | Pauses nickel, runs the host, restores nickel on **every** exit path |
 | `nickel.sh` | `stop` / `start` / `status` on their own, for probes and recovery |
 | `diagnose.sh` | Read-only device report; changes nothing, stops nothing |
+| `wifi.sh` | `up` / `down` / `status` — the network without nickel |
 
 Deploy them next to the binary and the bundle:
 
@@ -212,9 +213,30 @@ the Kobo is plugged into a computer — if the launcher's own text went with it,
 nickel would never come back. The restore runs from an `EXIT` trap, so a crash,
 a `kill`, or a failed bundle all still return the UI.
 
-The restart sequence follows KOReader's `platform/kobo/nickel.sh`. It
-deliberately leaves Wi-Fi alone where KOReader tears it down: the development
-loop runs over that interface.
+The restart sequence follows KOReader's `platform/kobo/nickel.sh`, and restores
+the environment `/etc/init.d/rcS` gives nickel — a shell that arrived over
+telnet has none of it, and a nickel restarted without `WIFI_MODULE_PATH`
+cannot reload the radio.
+
+It also leaves the DHCP client running where KOReader kills it. KOReader can
+afford to: it brings Wi-Fi up itself. `dhcpcd` deconfigures its interface and
+releases the lease on `SIGTERM`, so killing it is exactly how a session drops
+off the network it arrived on. The clients are handed back at restart, since
+nickel expects to own them.
+
+Nothing in the firmware brings Wi-Fi up — rcS only exports where the modules
+live, and nickel is what loads them. `wifi.sh` does that job for a session that
+outlives the UI:
+
+```sh
+./wifi.sh status          # interface, modules, supplicant, dhcp
+./wifi.sh up              # idempotent, and doubles as the repair path
+```
+
+Credentials are not its business: nickel already wrote the joined network into
+`/etc/wpa_supplicant/wpa_supplicant.conf`, and this only starts the daemons
+that read it. A device that has never joined a network from the Kobo UI has
+nothing to bring up.
 
 `hosts/kobo/tests/device-scripts.sh` drives all of this against a staged root
 with stubbed firmware tools, so the restore path is checkable without a Kobo:

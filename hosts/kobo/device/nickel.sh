@@ -18,7 +18,13 @@ set -u
 # exercised without a Kobo.
 NICKEL_ROOT="${NICKEL_ROOT:-}"
 
-NICKEL_PROCESSES="nickel hindenburg sickel fickel adobehost foxitpdf iink dhcpcd-dbus dhcpcd fmon"
+# Deliberately WITHOUT the DHCP clients. KOReader kills them here because it
+# brings Wi-Fi up itself; we keep the network the session is running over.
+# dhcpcd deconfigures its interface and releases the lease on SIGTERM, so
+# killing it is how a session silently drops off the network it arrived on.
+NICKEL_PROCESSES="nickel hindenburg sickel fickel adobehost foxitpdf iink fmon"
+# Handed back to nickel at restart, since nickel expects to own them.
+NICKEL_DHCP_PROCESSES="dhcpcd-dbus dhcpcd"
 # In 250ms ticks.
 NICKEL_STOP_TIMEOUT="${NICKEL_STOP_TIMEOUT:-20}"
 # Where the environment nickel was running with gets parked while it is down.
@@ -116,6 +122,10 @@ nickel_start() {
     fi
 
     nickel_restore_env
+    # nickel brings its own DHCP client up, so hand the interface back before
+    # starting it. Stopping did not touch these on purpose (see above).
+    # shellcheck disable=SC2086
+    killall -q -TERM $NICKEL_DHCP_PROCESSES 2>/dev/null
     cd "$NICKEL_ROOT/" || return 1
     unset OLDPWD
 
