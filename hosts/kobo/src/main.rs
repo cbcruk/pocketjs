@@ -652,15 +652,20 @@ fn main() -> Result<()> {
                         log::info!("kobo power: held {held:?}; handing the device back");
                         terminate.store(true, Ordering::Release);
                     } else if let Some(helper) = args.power_helper.as_deref() {
-                        if let Err(error) = suspend_through(helper) {
-                            log::error!("kobo power: {error:#}");
+                        match suspend_through(helper) {
+                            // Virtual time is a frame counter, so it did not
+                            // advance while the machine was down. Reloading
+                            // republishes the boot clock, which is the only
+                            // way a calendar app comes back showing the right
+                            // hour. Only after a suspend that happened: a
+                            // failed one has nothing to correct, and the
+                            // redraw would be a flash for nothing.
+                            Ok(()) => {
+                                reload.store(true, Ordering::Release);
+                                next_tick = Instant::now();
+                            }
+                            Err(error) => log::error!("kobo power: {error:#}"),
                         }
-                        // Virtual time is a frame counter, so it did not
-                        // advance while the machine was down. Reloading
-                        // republishes the boot clock, which is the only way a
-                        // calendar app comes back showing the right hour.
-                        reload.store(true, Ordering::Release);
-                        next_tick = Instant::now();
                     }
                 }
             }

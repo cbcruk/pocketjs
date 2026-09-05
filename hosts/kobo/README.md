@@ -159,6 +159,17 @@ hold is about to do while it is happening:
 | Short | `power.sh suspend`, then a reload |
 | Held 1.5s or more | Exit, so the launcher's trap hands nickel back |
 
+Verified on a Glo: the host finds the key on `/dev/input/event0` and a long
+press hands the device back. The key reads as nothing while nickel runs —
+nickel holds `EVIOCGRAB` on that node — which is only ever the case when this
+host is not running.
+
+**Suspend on this model is not settled.** Nickel's own short press is a display
+sleep, not a suspend to RAM: the network stays up and `/proc/uptime` keeps
+counting through it. `power.sh` asks for `mem`, which is deeper than anything
+nickel does here, and one attempt did not come back. Point `--power-helper` at
+something else, or pass `--no-power-key`, until that is understood.
+
 The reload after a resume is not incidental. Virtual time is a frame counter,
 so it does not advance while the machine is down; republishing the boot clock
 is the only way a calendar app comes back showing the right hour.
