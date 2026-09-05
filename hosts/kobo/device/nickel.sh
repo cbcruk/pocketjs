@@ -21,9 +21,67 @@ NICKEL_ROOT="${NICKEL_ROOT:-}"
 NICKEL_PROCESSES="nickel hindenburg sickel fickel adobehost foxitpdf iink dhcpcd-dbus dhcpcd fmon"
 # In 250ms ticks.
 NICKEL_STOP_TIMEOUT="${NICKEL_STOP_TIMEOUT:-20}"
+# Where the environment nickel was running with gets parked while it is down.
+NICKEL_ENV_CACHE="${NICKEL_ENV_CACHE:-/tmp/pocketjs-nickel-env}"
+
+# The variables /etc/init.d/rcS exports before starting nickel. Restarting it
+# without them leaves a subtly broken UI: WIFI_MODULE_PATH in particular
+# collapses to /drivers//wifi/.ko, so nothing can bring the radio back.
+NICKEL_ENV_KEYS="PLATFORM PRODUCT INTERFACE WIFI_MODULE WIFI_MODULE_PATH \
+NICKEL_HOME LD_LIBRARY_PATH LANG DBUS_SESSION_BUS_ADDRESS"
 
 nickel_running() {
     pidof nickel >/dev/null 2>&1
+}
+
+# Snapshot the live process's environment before killing it. Reading it back
+# off /proc is better than deriving it: it preserves whatever the firmware set,
+# including the dbus session address, which cannot be reconstructed.
+nickel_capture_env() {
+    pid="$(pidof nickel 2>/dev/null | cut -d' ' -f1)"
+    [ -n "$pid" ] && [ -r "/proc/$pid/environ" ] || return 0
+    captured="$(tr '\0' '\n' <"/proc/$pid/environ" 2>/dev/null)" || return 0
+    : >"$NICKEL_ENV_CACHE"
+    for key in $NICKEL_ENV_KEYS; do
+        line="$(echo "$captured" | grep "^$key=" | head -n 1)"
+        [ -n "$line" ] && echo "$line" >>"$NICKEL_ENV_CACHE"
+    done
+}
+
+# Restore the snapshot, then fill any gap the way rcS derives it. A shell that
+# arrived over telnet inherits none of this, so without the fallbacks a restart
+# from a debug session hands nickel an empty environment.
+nickel_restore_env() {
+    if [ -r "$NICKEL_ENV_CACHE" ]; then
+        while IFS= read -r line; do
+            [ -n "$line" ] && export "$line"
+        done <"$NICKEL_ENV_CACHE"
+    fi
+
+    if [ -z "${PLATFORM:-}" ]; then
+        cpu="$(ntx_hwconfig -s -p /dev/mmcblk0 CPU 2>/dev/null)"
+        PLATFORM="freescale"
+        [ -n "$cpu" ] && PLATFORM="$cpu-ntx"
+    fi
+    [ -n "${PRODUCT:-}" ] || PRODUCT="$(kobo_config.sh 2>/dev/null)"
+    if [ "$PLATFORM" = "freescale" ]; then
+        [ -n "${INTERFACE:-}" ] || INTERFACE="wlan0"
+        [ -n "${WIFI_MODULE:-}" ] || WIFI_MODULE="ar6000"
+    else
+        [ -n "${INTERFACE:-}" ] || INTERFACE="eth0"
+        [ -n "${WIFI_MODULE:-}" ] || WIFI_MODULE="dhd"
+    fi
+    [ -n "${WIFI_MODULE_PATH:-}" ] ||
+        WIFI_MODULE_PATH="$NICKEL_ROOT/drivers/$PLATFORM/wifi/$WIFI_MODULE.ko"
+    [ -n "${NICKEL_HOME:-}" ] || NICKEL_HOME="$NICKEL_ROOT/mnt/onboard/.kobo"
+    [ -n "${LANG:-}" ] || LANG="en_US.UTF-8"
+    LD_LIBRARY_PATH="$NICKEL_ROOT/usr/local/Kobo"
+    export PLATFORM PRODUCT INTERFACE WIFI_MODULE WIFI_MODULE_PATH NICKEL_HOME \
+        LANG LD_LIBRARY_PATH
+
+    if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]; then
+        echo "nickel: no dbus session address to restore; the UI may be degraded" >&2
+    fi
 }
 
 nickel_stop() {
@@ -31,6 +89,7 @@ nickel_stop() {
         echo "nickel: already stopped"
         return 0
     fi
+    nickel_capture_env
     # shellcheck disable=SC2086
     killall -q -TERM $NICKEL_PROCESSES 2>/dev/null
     ticks=0
@@ -56,8 +115,7 @@ nickel_start() {
         return 1
     fi
 
-    LD_LIBRARY_PATH="$NICKEL_ROOT/usr/local/Kobo"
-    export LD_LIBRARY_PATH
+    nickel_restore_env
     cd "$NICKEL_ROOT/" || return 1
     unset OLDPWD
 

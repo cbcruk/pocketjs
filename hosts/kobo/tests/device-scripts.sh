@@ -36,7 +36,9 @@ contains() {
 
 NICKEL_ROOT="$WORK/root"
 NICKEL_STATE="$WORK/nickel.state"
-export NICKEL_ROOT NICKEL_STATE
+NICKEL_ENV_SEEN="$WORK/nickel.env"
+NICKEL_ENV_CACHE="$WORK/nickel.env.cache"
+export NICKEL_ROOT NICKEL_STATE NICKEL_ENV_SEEN NICKEL_ENV_CACHE
 mkdir -p "$NICKEL_ROOT/tmp" "$NICKEL_ROOT/usr/local/Kobo" "$NICKEL_ROOT/etc/init.d"
 
 mkdir -p "$WORK/bin"
@@ -56,7 +58,19 @@ STUB
 cat >"$NICKEL_ROOT/usr/local/Kobo/nickel" <<'STUB'
 #!/bin/sh
 echo running >"$NICKEL_STATE"
+# Record what the restart handed us, so the test can check the UI is not
+# brought back with the empty environment a telnet shell would give it.
+env >"$NICKEL_ENV_SEEN"
 STUB
+cat >"$WORK/bin/ntx_hwconfig" <<'STUB'
+#!/bin/sh
+echo mx50
+STUB
+cat >"$WORK/bin/kobo_config.sh" <<'STUB'
+#!/bin/sh
+echo kraken
+STUB
+chmod +x "$WORK/bin/ntx_hwconfig" "$WORK/bin/kobo_config.sh"
 chmod +x "$WORK/bin/pidof" "$WORK/bin/killall" "$WORK/bin/usleep" \
     "$NICKEL_ROOT/usr/local/Kobo/nickel"
 PATH="$WORK/bin:$PATH"
@@ -106,6 +120,16 @@ check "stop is idempotent" "nickel: already stopped" "$("$DEVICE_DIR/nickel.sh" 
 check "start brings the UI back" "running" "$(await_nickel)"
 check "an unknown subcommand is rejected" "2" \
     "$("$DEVICE_DIR/nickel.sh" bogus 2>/dev/null; echo $?)"
+
+# rcS exports these before it starts nickel; a shell that arrived over telnet
+# has none of them, and a restart without WIFI_MODULE_PATH cannot reload the
+# radio — which is how a session loses its own network.
+for key in PLATFORM INTERFACE WIFI_MODULE WIFI_MODULE_PATH NICKEL_HOME; do
+    contains "the restart exports $key" "^$key=." "$NICKEL_ENV_SEEN"
+done
+check "WIFI_MODULE_PATH names a real platform" "ok" \
+    "$(grep -q '^WIFI_MODULE_PATH=.*/drivers/mx50-ntx/wifi/dhd.ko$' "$NICKEL_ENV_SEEN" &&
+        echo ok || echo "$(grep '^WIFI_MODULE_PATH=' "$NICKEL_ENV_SEEN")")"
 
 echo "-- pocketjs.sh --"
 echo running >"$NICKEL_STATE"
