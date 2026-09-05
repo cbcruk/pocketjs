@@ -92,6 +92,17 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 trap 'exit 129' HUP
 
+# Measured on a Kobo Glo with --probe-touch, not assumed: the zForce reports
+# panel pixels while declaring 0..1200 by 0..1600, and its axes are swapped
+# with X mirrored. Every value stays overridable from the environment.
+POCKETJS_TOUCH_SWAP_XY="${POCKETJS_TOUCH_SWAP_XY:-1}"
+POCKETJS_TOUCH_FLIP_X="${POCKETJS_TOUCH_FLIP_X:-1}"
+POCKETJS_TOUCH_FLIP_Y="${POCKETJS_TOUCH_FLIP_Y:-0}"
+POCKETJS_TOUCH_X_MAX="${POCKETJS_TOUCH_X_MAX:-1023}"
+POCKETJS_TOUCH_Y_MAX="${POCKETJS_TOUCH_Y_MAX:-757}"
+export POCKETJS_TOUCH_SWAP_XY POCKETJS_TOUCH_FLIP_X POCKETJS_TOUCH_FLIP_Y \
+    POCKETJS_TOUCH_X_MAX POCKETJS_TOUCH_Y_MAX
+
 nickel_stop || fail "nickel would not stop; refusing to fight it for /dev/fb0"
 
 [ -f "$POCKETJS_LOG" ] && mv -f "$POCKETJS_LOG" "$POCKETJS_LOG.1"

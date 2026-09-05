@@ -14,6 +14,12 @@
 //! Exit is nonzero if the rendered frame is blank, which is the failure this
 //! check exists to catch: a bundle that boots but paints nothing looks
 //! identical to a working one in the host's logs.
+//!
+//! `--touch X,Y` drags a synthetic contact across the surface before the
+//! snapshot. An idle first frame exercises far less of an app than a touch
+//! does — paper-ink only builds its ink nodes, and only touches the style
+//! props they carry, once a contact exists — so without this a bundle can
+//! pass here and still throw on the device the moment a finger lands.
 
 use std::path::PathBuf;
 
@@ -29,11 +35,46 @@ const LOGICAL_H: usize = 512;
 const DENSITY: usize = 2;
 /// Enough ticks for mount effects and any entry transition to settle.
 const FRAMES: u32 = 60;
+/// Frames the synthetic contact is held for. It moves every frame because an
+/// app may ignore a contact that has not changed position.
+const TOUCH_FRAMES: u32 = 8;
+
+/// framework/src/touch.ts legacy form: `(id:8 << 18) | (y:9 << 9) | x:9`.
+fn pack_touch(id: u32, x: u32, y: u32) -> u32 {
+    ((id & 0xff) << 18) | ((y & 0x1ff) << 9) | (x & 0x1ff)
+}
+
+fn parse_touch(value: &str) -> Result<(u32, u32)> {
+    let Some((x, y)) = value.split_once(',') else {
+        bail!("--touch wants X,Y in logical coordinates (got {value:?})");
+    };
+    let x: u32 = x.trim().parse().context("--touch X")?;
+    let y: u32 = y.trim().parse().context("--touch Y")?;
+    if x as usize >= LOGICAL_W || y as usize >= LOGICAL_H {
+        bail!("--touch {x},{y} is outside the {LOGICAL_W}x{LOGICAL_H} logical viewport");
+    }
+    Ok((x, y))
+}
 
 fn main() -> Result<()> {
-    let args = std::env::args().skip(1).collect::<Vec<_>>();
-    let [js, pak, out] = args.as_slice() else {
-        bail!("usage: render_gray <app.js> <app.pak> <out-prefix>");
+    let words = std::env::args().skip(1).collect::<Vec<_>>();
+    let mut positional = Vec::new();
+    let mut touch = None;
+    let mut index = 0;
+    while index < words.len() {
+        if words[index] == "--touch" {
+            let value = words
+                .get(index + 1)
+                .ok_or_else(|| anyhow::anyhow!("--touch requires a value"))?;
+            touch = Some(parse_touch(value)?);
+            index += 2;
+            continue;
+        }
+        positional.push(words[index].clone());
+        index += 1;
+    }
+    let [js, pak, out] = positional.as_slice() else {
+        bail!("usage: render_gray <app.js> <app.pak> <out-prefix> [--touch X,Y]");
     };
     let out = PathBuf::from(out);
 
@@ -61,6 +102,21 @@ fn main() -> Result<()> {
         guest
             .frame_with_touches(0, spec::ANALOG_CENTER, &[])
             .with_context(|| format!("guest frame {tick}"))?;
+        surface.tick();
+    }
+    if let Some((x, y)) = touch {
+        for step in 0..TOUCH_FRAMES {
+            let x = (x + step).min(LOGICAL_W as u32 - 1);
+            let y = (y + step).min(LOGICAL_H as u32 - 1);
+            guest
+                .frame_with_touches(0, spec::ANALOG_CENTER, &[pack_touch(0, x, y)])
+                .with_context(|| format!("guest frame with contact at {x},{y}"))?;
+            surface.tick();
+        }
+        // Release, so a teardown path runs too.
+        guest
+            .frame_with_touches(0, spec::ANALOG_CENTER, &[])
+            .context("guest frame after the contact lifted")?;
         surface.tick();
     }
     surface.with_ui(|ui| {

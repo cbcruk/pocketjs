@@ -157,7 +157,8 @@ POCKETJS_FRAMEBUFFER, POCKETJS_FBINK, POCKETJS_PRESENT_HZ,
 POCKETJS_MOTION_WAVEFORM, POCKETJS_GHOST_BUDGET, and POCKETJS_ROTATION.
 Touch calibration is environment-only and applied in this order:
 POCKETJS_TOUCH_SWAP_XY, then POCKETJS_TOUCH_FLIP_X and POCKETJS_TOUCH_FLIP_Y.
-Use --probe-touch to settle them."
+POCKETJS_TOUCH_{{X,Y}}_{{MIN,MAX}} replace the axis extents the digitizer declares,
+which a driver may advertise without using. Use --probe-touch to settle them."
     );
 }
 

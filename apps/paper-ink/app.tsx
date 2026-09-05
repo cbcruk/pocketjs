@@ -81,7 +81,7 @@ export default function PaperInk() {
               insetT: point.y - point.size / 2,
               width: point.size,
               height: point.size,
-              borderRadius: point.size / 2,
+              radius: point.size / 2,
               bgColor: point.shade,
             }}
           />

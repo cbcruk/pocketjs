@@ -143,6 +143,70 @@ impl Calibration {
     }
 }
 
+/// Replacements for the axis extents a digitizer declares through
+/// `EVIOCGABS`.
+///
+/// A driver is free to declare a coordinate space it does not actually use,
+/// and the Glo's zForce does exactly that: it advertises 0..1200 by 0..1600
+/// while reporting panel pixels, so normalizing against the declaration
+/// confines every touch to roughly the top-left half of the screen. Measure
+/// with `--probe-touch` and override; nothing here guesses.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct RangeOverride {
+    x_min: Option<i32>,
+    x_max: Option<i32>,
+    y_min: Option<i32>,
+    y_max: Option<i32>,
+}
+
+impl RangeOverride {
+    fn from_env() -> Result<Self> {
+        let bound = |name: &str| -> Result<Option<i32>> {
+            std::env::var(name)
+                .ok()
+                .map(|value| {
+                    value
+                        .parse::<i32>()
+                        .map_err(|error| anyhow::anyhow!("{name}={value:?}: {error}"))
+                })
+                .transpose()
+        };
+        Ok(Self {
+            x_min: bound("POCKETJS_TOUCH_X_MIN")?,
+            x_max: bound("POCKETJS_TOUCH_X_MAX")?,
+            y_min: bound("POCKETJS_TOUCH_Y_MIN")?,
+            y_max: bound("POCKETJS_TOUCH_Y_MAX")?,
+        })
+    }
+
+    fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// Apply the overrides to a probed pair of ranges, rejecting a result that
+    /// would make `normalize` degenerate.
+    fn apply(&self, x: AxisRange, y: AxisRange) -> Result<(AxisRange, AxisRange)> {
+        let merged = |range: AxisRange, min: Option<i32>, max: Option<i32>, axis: char| {
+            let range = AxisRange {
+                min: min.unwrap_or(range.min),
+                max: max.unwrap_or(range.max),
+            };
+            if range.max <= range.min {
+                bail!(
+                    "touch {axis} range override is empty: min {} is not below max {}",
+                    range.min,
+                    range.max
+                );
+            }
+            Ok(range)
+        };
+        Ok((
+            merged(x, self.x_min, self.x_max, 'x')?,
+            merged(y, self.y_min, self.y_max, 'y')?,
+        ))
+    }
+}
+
 /// One active contact in every coordinate space the host derives from it.
 ///
 /// The runtime only ever needs the logical pair, but a device bring-up session
@@ -274,8 +338,29 @@ pub struct Input {
 
 impl Input {
     pub fn discover() -> Result<Self> {
+        let mut devices = discover_devices()?;
+        let overrides = RangeOverride::from_env()?;
+        if !overrides.is_empty() {
+            for device in &mut devices {
+                let (x_range, y_range) = overrides.apply(device.x_range, device.y_range)?;
+                log::info!(
+                    "kobo input: {} axis override x={}..{} y={}..{} (declared x={}..{} y={}..{})",
+                    device.path,
+                    x_range.min,
+                    x_range.max,
+                    y_range.min,
+                    y_range.max,
+                    device.x_range.min,
+                    device.x_range.max,
+                    device.y_range.min,
+                    device.y_range.max
+                );
+                device.x_range = x_range;
+                device.y_range = y_range;
+            }
+        }
         Ok(Self {
-            devices: discover_devices()?,
+            devices,
             calibration: Calibration::from_env(),
         })
     }
@@ -354,13 +439,21 @@ impl Input {
     }
 
     /// The calibration currently in force, as the environment variables that
-    /// would reproduce it.
+    /// would reproduce it. The axis extents are the ones actually in use, so a
+    /// probe session shows the overridden values rather than the declared ones.
     pub fn calibration_summary(&self) -> String {
+        let axes = self.selected_axes();
         format!(
-            "POCKETJS_TOUCH_SWAP_XY={} POCKETJS_TOUCH_FLIP_X={} POCKETJS_TOUCH_FLIP_Y={}",
+            "POCKETJS_TOUCH_SWAP_XY={} POCKETJS_TOUCH_FLIP_X={} POCKETJS_TOUCH_FLIP_Y={} \
+             POCKETJS_TOUCH_X_MIN={} POCKETJS_TOUCH_X_MAX={} \
+             POCKETJS_TOUCH_Y_MIN={} POCKETJS_TOUCH_Y_MAX={}",
             u8::from(self.calibration.swap_xy),
             u8::from(self.calibration.flip_x),
-            u8::from(self.calibration.flip_y)
+            u8::from(self.calibration.flip_y),
+            axes.as_ref().map_or(0, |axes| axes.x_min),
+            axes.as_ref().map_or(0, |axes| axes.x_max),
+            axes.as_ref().map_or(0, |axes| axes.y_min),
+            axes.as_ref().map_or(0, |axes| axes.y_max)
         )
     }
 }
@@ -722,6 +815,81 @@ mod tests {
         assert_eq!((report.raw_x, report.raw_y), (250, 750));
         assert_eq!((report.panel_x, report.panel_y), (189, 767));
         assert_eq!((report.logical_x, report.logical_y), (94, 383));
+    }
+
+    #[test]
+    fn an_axis_override_replaces_only_the_bounds_it_names() {
+        let declared = AxisRange { min: 0, max: 1200 };
+        let other = AxisRange { min: 0, max: 1600 };
+        let overrides = RangeOverride {
+            x_max: Some(1023),
+            y_max: Some(757),
+            ..RangeOverride::default()
+        };
+        let (x, y) = overrides.apply(declared, other).expect("override applies");
+        assert_eq!(x, AxisRange { min: 0, max: 1023 });
+        assert_eq!(y, AxisRange { min: 0, max: 757 });
+    }
+
+    #[test]
+    fn an_override_that_would_collapse_an_axis_is_rejected() {
+        let range = AxisRange { min: 0, max: 1200 };
+        let overrides = RangeOverride {
+            x_min: Some(900),
+            x_max: Some(100),
+            ..RangeOverride::default()
+        };
+        let error = overrides.apply(range, range).unwrap_err().to_string();
+        assert!(error.contains("touch x range override is empty"));
+    }
+
+    #[test]
+    fn the_glo_digitizer_reaches_both_screen_edges_once_overridden() {
+        // Measured on a Kobo Glo: the zForce reports panel pixels while
+        // declaring 0..1200 by 0..1600, and its axes are swapped and X is
+        // mirrored. Under the declaration a left-edge touch lands mid-screen.
+        let declared_x = AxisRange { min: 0, max: 1200 };
+        let declared_y = AxisRange { min: 0, max: 1600 };
+        let calibration = Calibration {
+            swap_xy: true,
+            flip_x: true,
+            flip_y: false,
+        };
+        let contact = |x, y| Contact {
+            active: true,
+            id: 0,
+            x,
+            y,
+        };
+        let geometry = glo_geometry();
+
+        let declared_left = map_contact(
+            calibration,
+            declared_x,
+            declared_y,
+            0,
+            contact(0, 757),
+            &geometry,
+        );
+        assert_eq!(declared_left.logical_x, 199);
+
+        let overrides = RangeOverride {
+            x_max: Some(1023),
+            y_max: Some(757),
+            ..RangeOverride::default()
+        };
+        let (x_range, y_range) = overrides.apply(declared_x, declared_y).expect("override");
+        let corner = |x, y| map_contact(calibration, x_range, y_range, 0, contact(x, y), &geometry);
+        assert_eq!((corner(0, 757).logical_x, corner(0, 757).logical_y), (0, 0));
+        assert_eq!((corner(0, 0).logical_x, corner(0, 0).logical_y), (378, 0));
+        assert_eq!(
+            (corner(1023, 757).logical_x, corner(1023, 757).logical_y),
+            (0, 511)
+        );
+        assert_eq!(
+            (corner(1023, 0).logical_x, corner(1023, 0).logical_y),
+            (378, 511)
+        );
     }
 
     #[test]
