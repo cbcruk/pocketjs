@@ -89,6 +89,15 @@ fn main() -> Result<()> {
     surface.feed_pak(&pak_bytes);
     let guest = Guest::new().context("creating PocketJS guest")?;
     surface.mount(&guest).context("mounting UI surface")?;
+    // The device host publishes the real local time here. A snapshot wants a
+    // fixed one instead, so the same bundle always produces the same PGM.
+    guest
+        .eval(
+            "boot-clock",
+            "globalThis.__bootClock = { year: 2026, month: 9, day: 5, \
+             weekday: 5, secondOfDay: 35100 };",
+        )
+        .context("publishing the snapshot boot clock")?;
     guest.eval("app", &bundle).context("evaluating app bundle")?;
     if !guest.has_frame() {
         bail!("{js} installed no global frame(); was it built for {HOST_ID}?");

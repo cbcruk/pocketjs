@@ -1,0 +1,30 @@
+{
+  "$schema": "https://pocketjs.dev/schema/pocket-2.json",
+  "pocket": 2,
+  "id": "dev.pocket-stack.ink-clock",
+  "name": "pocketjs-ink-clock",
+  "title": "PocketJS: Ink Clock",
+  "version": "0.1.0",
+  "engine": {
+    "capabilities": {
+      "requires": [
+        "input.touch",
+        "text.glyphs.baked"
+      ]
+    }
+  },
+  "app": {
+    "entry": "apps/ink-clock/main.tsx",
+    "output": "ink-clock-main",
+    "framework": "solid",
+    "viewport": {
+      "fixed": {
+        "logical": [
+          379,
+          512
+        ],
+        "presentation": "native"
+      }
+    }
+  }
+}

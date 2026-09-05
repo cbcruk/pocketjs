@@ -556,6 +556,7 @@ describe("semantic resolution", () => {
       cursor: [true, true, false, true],
       gallery: [true, true, false, true],
       "hangul-probe": [false, false, false, false], // shares paper-ink's fixed 379x512 kobo-glo touch surface
+      "ink-clock": [false, false, false, false], // ditto: the kobo-glo status screen
       hero: [true, true, true, true],
       "hero-vue-sfc": [true, true, false, true],
       "hero-vue-vapor": [true, true, false, true],

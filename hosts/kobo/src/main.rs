@@ -246,6 +246,54 @@ fn probe_touch(input: &mut Input, geometry: &Geometry) -> Result<()> {
     Ok(())
 }
 
+/// Publish the device's local wall clock as a one-shot boot input.
+///
+/// PocketJS time is a frame counter by design (docs/DETERMINISM.md): no host
+/// may hand the guest a live clock, and none does. A calendar still has to
+/// start somewhere, so this writes the local time ONCE, into the same contract
+/// slot the runtime already uses for `__simHz` and `__pak`, before the bundle
+/// evals. Everything after it is `virtualNow()`, so replaying the same boot
+/// value replays the same trajectory — the fold stays pure.
+///
+/// A SIGHUP reload runs this again, which is also how a long-running session
+/// resynchronizes against the drift a dropped logic tick leaves behind.
+fn publish_boot_clock(guest: &Guest) -> Result<()> {
+    // SAFETY: time(NULL) returns the epoch and dereferences nothing.
+    let now = unsafe { libc::time(std::ptr::null_mut()) };
+    let mut broken: libc::tm = unsafe { std::mem::zeroed() };
+    // SAFETY: localtime_r writes one struct tm through a pointer we own, and
+    // reads the time_t we just produced.
+    if unsafe { libc::localtime_r(&now, &mut broken) }.is_null() {
+        bail!("localtime_r failed for epoch {now}; is the device timezone readable?");
+    }
+    let second_of_day = broken.tm_hour * 3600 + broken.tm_min * 60 + broken.tm_sec;
+    guest
+        .eval(
+            "boot-clock",
+            &format!(
+                "globalThis.__bootClock = {{ year: {}, month: {}, day: {}, \
+                 weekday: {}, secondOfDay: {} }};",
+                broken.tm_year + 1900,
+                broken.tm_mon + 1,
+                broken.tm_mday,
+                broken.tm_wday,
+                second_of_day
+            ),
+        )
+        .context("publishing the boot clock")?;
+    log::info!(
+        "kobo boot clock: {:04}-{:02}-{:02} {:02}:{:02}:{:02} local (weekday {})",
+        broken.tm_year + 1900,
+        broken.tm_mon + 1,
+        broken.tm_mday,
+        broken.tm_hour,
+        broken.tm_min,
+        broken.tm_sec,
+        broken.tm_wday
+    );
+    Ok(())
+}
+
 struct AppRuntime {
     guest: Guest,
     surface: UiSurface,
@@ -267,6 +315,7 @@ impl AppRuntime {
         surface.feed_pak(&pak);
         let guest = Guest::new().context("creating PocketJS guest")?;
         surface.mount(&guest).context("mounting UI surface")?;
+        publish_boot_clock(&guest)?;
         guest.eval("app", &js).context("evaluating app bundle")?;
         if !guest.has_frame() {
             bail!(
