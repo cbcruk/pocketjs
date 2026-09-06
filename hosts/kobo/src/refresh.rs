@@ -1,12 +1,22 @@
-//! E-ink refresh policy and the external FBInk process adapter.
+//! E-ink refresh policy and the panel update ioctl.
 //!
-//! FBInk is intentionally not linked into this MIT binary. The host writes
-//! `/dev/fb0`; an independently installed FBInk CLI performs the model-
-//! specific update ioctl. FBInk already carries Kobo's per-generation mxcfb
-//! quirks (the Glo is a Mark 4 i.MX507), so the host never open-codes them.
+//! This used to shell out to an installed FBInk CLI, on the reasoning that
+//! FBInk carries Kobo's per-generation mxcfb quirks so the host need not. The
+//! cost of that convenience was a dynamic dependency, and it came due: FBInk
+//! is a hard-float binary, the Glo's 2012 firmware ships a soft-float
+//! userspace, and the host — static musl, indifferent to any of that — could
+//! not start it. One dependency tied a runtime that needs nothing to a
+//! particular firmware.
+//!
+//! So the update goes through the ioctl directly. There is exactly one device
+//! to support, and its interface is fixed: a Mark 4 i.MX50 running the NTX
+//! 2.6.35 kernel, which takes `mxcfb_update_data_v1_ntx` on
+//! `MXCFB_SEND_UPDATE`. The constants are transcribed from FBInk's
+//! `eink/mxcfb-kobo.h`, which remains the reference for what these numbers
+//! mean; what is gone is the requirement that FBInk be installed and runnable.
 
+use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
@@ -25,12 +35,14 @@ pub enum Waveform {
 }
 
 impl Waveform {
-    fn as_fbink(self) -> &'static str {
+    /// NTX waveform ids. `AUTO` is not one of them — it is the driver's own
+    /// sentinel telling the EPDC to pick, so it sits outside the 0..11 range.
+    fn as_ntx(self) -> u32 {
         match self {
-            Self::Auto => "AUTO",
-            Self::Du => "DU",
-            Self::A2 => "A2",
-            Self::Gc16 => "GC16",
+            Self::Auto => WAVEFORM_MODE_AUTO,
+            Self::Du => NTX_WFM_MODE_DU,
+            Self::A2 => NTX_WFM_MODE_A2,
+            Self::Gc16 => NTX_WFM_MODE_GC16,
         }
     }
 
@@ -212,86 +224,145 @@ impl RefreshPolicy {
     }
 }
 
-pub struct FbInk {
-    path: PathBuf,
-    child: Option<Child>,
+// Transcribed from FBInk's eink/mxcfb-kobo.h. The Glo is a Mark 4 i.MX50 on
+// the NTX 2.6.35 kernel, which is the `_v1_ntx` shape of the interface.
+const NTX_WFM_MODE_DU: u32 = 1;
+const NTX_WFM_MODE_GC16: u32 = 2;
+const NTX_WFM_MODE_A2: u32 = 4;
+/// Not an NTX mode id: the driver's "you choose" sentinel.
+const WAVEFORM_MODE_AUTO: u32 = 257;
+const UPDATE_MODE_PARTIAL: u32 = 0;
+const UPDATE_MODE_FULL: u32 = 1;
+const TEMP_USE_AMBIENT: i32 = 0x1000;
+/// `_IOW('F', 0x2E, struct mxcfb_update_data_v1_ntx)`, the struct being 68 bytes.
+#[cfg(target_os = "linux")]
+const MXCFB_SEND_UPDATE_V1_NTX: libc::c_ulong = 0x4044_462E;
+/// `_IOW('F', 0x2F, uint32_t)` — the mx50/NTX flavour, which takes the marker
+/// by value rather than the later struct.
+#[cfg(target_os = "linux")]
+const MXCFB_WAIT_FOR_UPDATE_COMPLETE_V1: libc::c_ulong = 0x4004_462F;
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct MxcfbRect {
+    top: u32,
+    left: u32,
+    width: u32,
+    height: u32,
 }
 
-impl FbInk {
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct MxcfbAltBufferDataNtx {
+    /// A kernel-side pointer this host never populates. Declared as the 32-bit
+    /// word it is on the target rather than as a pointer, so the struct keeps
+    /// the same 68-byte shape when built for a 64-bit host.
+    virt_addr: u32,
+    phys_addr: u32,
+    width: u32,
+    height: u32,
+    alt_update_region: MxcfbRect,
+}
+
+/// The ioctl number encodes this size, so a layout that drifts is not a subtle
+/// bug — the driver rejects it, or worse, reads the wrong fields.
+const _: () = assert!(std::mem::size_of::<MxcfbUpdateDataV1Ntx>() == 68);
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct MxcfbUpdateDataV1Ntx {
+    update_region: MxcfbRect,
+    waveform_mode: u32,
+    update_mode: u32,
+    update_marker: u32,
+    temp: i32,
+    flags: u32,
+    alt_buffer_data: MxcfbAltBufferDataNtx,
+}
+
+/// The panel's update queue, addressed straight through the framebuffer.
+pub struct Epdc {
+    path: PathBuf,
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    file: File,
+    marker: u32,
+    pending: Option<u32>,
+}
+
+impl Epdc {
     pub fn new(path: impl Into<PathBuf>) -> Result<Self> {
         let path = path.into();
-        if !path.is_file() {
-            bail!("FBInk helper {} is missing", path.display());
-        }
-        Ok(Self { path, child: None })
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .with_context(|| format!("opening {} for panel updates", path.display()))?;
+        Ok(Self {
+            path,
+            file,
+            marker: 0,
+            pending: None,
+        })
     }
 
-    /// Reap the preceding helper. A running helper applies backpressure to the
-    /// physical present path without slowing PocketJS simulation ticks.
+    /// Always ready. Backpressure used to come from reaping a child process;
+    /// now it comes from RefreshPolicy, which already paces to `present_hz`
+    /// and holds motion updates in a window. The EPDC queues what it is given.
     pub fn ready(&mut self) -> Result<bool> {
-        let Some(child) = self.child.as_mut() else {
-            return Ok(true);
-        };
-        let Some(status) = child.try_wait().context("polling FBInk helper")? else {
-            return Ok(false);
-        };
-        self.child = None;
-        if !status.success() {
-            bail!("FBInk helper exited with {status}");
-        }
         Ok(true)
     }
 
     pub fn submit(&mut self, request: RefreshRequest) -> Result<()> {
-        if !self.ready()? {
-            bail!("attempted to submit an FBInk update while the previous one is running");
-        }
         let Rect { x, y, w, h } = request.rect;
-        let region = format!("top={y},left={x},width={w},height={h}");
-        let mut command = Command::new(&self.path);
-        command
-            .arg("-q")
-            .arg("-s")
-            .arg(region)
-            .arg("-W")
-            .arg(request.waveform.as_fbink())
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::inherit());
-        if request.flash {
-            command.arg("-f");
-        }
+        self.marker = self.marker.wrapping_add(1).max(1);
+        let update = MxcfbUpdateDataV1Ntx {
+            update_region: MxcfbRect {
+                top: y as u32,
+                left: x as u32,
+                width: w as u32,
+                height: h as u32,
+            },
+            waveform_mode: request.waveform.as_ntx(),
+            // FULL is the flashing update; PARTIAL leaves the rest alone.
+            update_mode: if request.flash {
+                UPDATE_MODE_FULL
+            } else {
+                UPDATE_MODE_PARTIAL
+            },
+            update_marker: self.marker,
+            temp: TEMP_USE_AMBIENT,
+            flags: 0,
+            alt_buffer_data: MxcfbAltBufferDataNtx {
+                virt_addr: 0,
+                phys_addr: 0,
+                width: 0,
+                height: 0,
+                alt_update_region: MxcfbRect::default(),
+            },
+        };
         log::debug!(
-            "kobo refresh: {:?} {:?} {}x{}+{},{}",
+            "kobo refresh: {:?} {:?} {}x{}+{},{} marker={}",
             request.kind,
             request.waveform,
             w,
             h,
             x,
-            y
+            y,
+            self.marker
         );
-        self.child = Some(
-            command
-                .spawn()
-                .with_context(|| format!("starting FBInk {}", self.path.display()))?,
-        );
+        self.send(&update)?;
+        self.pending = Some(self.marker);
         Ok(())
     }
 
-    /// Wait for the final refresh helper before the device wrapper resumes the
-    /// Kobo UI and power management. A nonzero helper status remains a
-    /// runtime error, while a wait error leaves the child owned by `Drop` so
-    /// the fail-safe kill-and-reap path can still run.
+    /// Wait for the last update to reach the glass before the caller hands the
+    /// panel back. Without it the UI returns mid-refresh and the final frame
+    /// is whatever the EPDC happened to have finished.
     pub fn finish(&mut self) -> Result<()> {
-        let Some(child) = self.child.as_mut() else {
+        let Some(marker) = self.pending.take() else {
             return Ok(());
         };
-        let status = child.wait().context("waiting for final FBInk helper")?;
-        self.child = None;
-        if !status.success() {
-            bail!("FBInk helper exited with {status}");
-        }
-        Ok(())
+        self.wait_for(marker)
     }
 
     pub fn path(&self) -> &Path {
@@ -299,30 +370,60 @@ impl FbInk {
     }
 }
 
-impl Drop for FbInk {
-    fn drop(&mut self) {
-        let Some(mut child) = self.child.take() else {
-            return;
-        };
+#[cfg(target_os = "linux")]
+impl Epdc {
+    fn send(&mut self, update: &MxcfbUpdateDataV1Ntx) -> Result<()> {
+        use std::os::fd::AsRawFd;
 
-        // Drop is the abnormal/early-return path. FBInk is a short-lived,
-        // single-process helper, so terminate it and synchronously reap it
-        // before control can return to the launcher.
-        if let Err(error) = child.kill() {
-            log::warn!("kobo refresh: failed to kill outstanding FBInk helper: {error}");
+        // SAFETY: the request encodes the struct the driver expects, and the
+        // pointer is a live borrow of exactly that struct.
+        let result = unsafe {
+            libc::ioctl(
+                self.file.as_raw_fd(),
+                MXCFB_SEND_UPDATE_V1_NTX as _,
+                update as *const MxcfbUpdateDataV1Ntx,
+            )
+        };
+        if result < 0 {
+            return Err(std::io::Error::last_os_error())
+                .with_context(|| format!("MXCFB_SEND_UPDATE on {}", self.path.display()));
         }
-        match child.wait() {
-            Ok(status) if !status.success() => {
-                log::warn!("kobo refresh: reaped FBInk helper with {status}")
-            }
-            Ok(_) => {}
-            Err(error) => {
-                log::error!("kobo refresh: failed to reap outstanding FBInk helper: {error}")
-            }
+        Ok(())
+    }
+
+    fn wait_for(&mut self, marker: u32) -> Result<()> {
+        use std::os::fd::AsRawFd;
+
+        // SAFETY: the mx50 flavour takes the marker by value, not by pointer.
+        let result = unsafe {
+            libc::ioctl(
+                self.file.as_raw_fd(),
+                MXCFB_WAIT_FOR_UPDATE_COMPLETE_V1 as _,
+                marker as libc::c_ulong,
+            )
+        };
+        if result < 0 {
+            // A marker the driver has already retired is not an error worth
+            // failing a shutdown over.
+            log::debug!(
+                "kobo refresh: waiting for marker {marker} returned {}",
+                std::io::Error::last_os_error()
+            );
         }
+        Ok(())
     }
 }
 
+#[cfg(not(target_os = "linux"))]
+impl Epdc {
+    fn send(&mut self, _update: &MxcfbUpdateDataV1Ntx) -> Result<()> {
+        bail!("panel updates are only supported on Linux")
+    }
+
+    fn wait_for(&mut self, _marker: u32) -> Result<()> {
+        Ok(())
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -395,40 +496,26 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn finish_reaps_once_and_preserves_nonzero_status() {
-        let child = Command::new("/bin/sh")
-            .args(["-c", "exit 7"])
-            .spawn()
-            .unwrap();
-        let mut fbink = FbInk {
-            path: PathBuf::from("/bin/sh"),
-            child: Some(child),
-        };
-
-        let error = fbink.finish().unwrap_err().to_string();
-        assert!(error.contains("FBInk helper exited with"));
-        assert!(error.contains('7'));
-        assert!(fbink.child.is_none());
-        assert!(fbink.finish().is_ok());
+    fn the_ioctl_numbers_match_their_iow_encoding() {
+        // Hand-transcribed hex is exactly the kind of constant that fails
+        // silently: a wrong number is a panel that never updates.
+        fn iow(kind: u8, nr: u8, size: usize) -> u64 {
+            (1 << 30) | ((size as u64) << 16) | ((kind as u64) << 8) | nr as u64
+        }
+        assert_eq!(
+            iow(b'F', 0x2E, std::mem::size_of::<MxcfbUpdateDataV1Ntx>()),
+            0x4044_462E
+        );
+        assert_eq!(iow(b'F', 0x2F, std::mem::size_of::<u32>()), 0x4004_462F);
     }
 
-    #[cfg(unix)]
     #[test]
-    fn drop_kills_and_reaps_an_active_helper() {
-        let child = Command::new("/bin/sleep").arg("30").spawn().unwrap();
-        let pid = child.id() as libc::pid_t;
-        let fbink = FbInk {
-            path: PathBuf::from("/bin/sleep"),
-            child: Some(child),
-        };
-
-        drop(fbink);
-
-        // SAFETY: signal 0 only checks whether the captured process id exists.
-        assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
-        assert_eq!(
-            std::io::Error::last_os_error().raw_os_error(),
-            Some(libc::ESRCH)
-        );
+    fn waveforms_map_to_ntx_ids_and_auto_stays_the_sentinel() {
+        assert_eq!(Waveform::Du.as_ntx(), 1);
+        assert_eq!(Waveform::Gc16.as_ntx(), 2);
+        assert_eq!(Waveform::A2.as_ntx(), 4);
+        // AUTO is the driver telling itself to choose, not an NTX mode id, so
+        // it must stay outside the 0..11 range the others live in.
+        assert_eq!(Waveform::Auto.as_ntx(), 257);
     }
 }

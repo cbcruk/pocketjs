@@ -47,26 +47,9 @@ fail() {
     exit 1
 }
 
-resolve_fbink() {
-    # KOReader ships the FBInk CLI in its own install directory, which is the
-    # easiest way to get a Kobo-native build onto the device.
-    for candidate in \
-        "${POCKETJS_FBINK:-}" \
-        "$POCKETJS_DIR/bin/fbink" \
-        /mnt/onboard/.adds/koreader/fbink \
-        /usr/local/bin/fbink; do
-        if [ -n "$candidate" ] && [ -x "$candidate" ]; then
-            echo "$candidate"
-            return 0
-        fi
-    done
-    return 1
-}
-
 [ -x "$POCKETJS_BIN" ] || fail "host binary not found or not executable: $POCKETJS_BIN"
 [ -r "$POCKETJS_JS" ] || fail "bundle not readable: $POCKETJS_JS"
 [ -r "$POCKETJS_PAK" ] || fail "pak not readable: $POCKETJS_PAK"
-fbink="$(resolve_fbink)" || fail "no FBInk CLI found; install one and set POCKETJS_FBINK"
 
 if ! mkdir "$POCKETJS_LOCK" 2>/dev/null; then
     if [ -r "$POCKETJS_LOCK/pid" ] && kill -0 "$(cat "$POCKETJS_LOCK/pid")" 2>/dev/null; then
@@ -106,7 +89,6 @@ export POCKETJS_TOUCH_SWAP_XY POCKETJS_TOUCH_FLIP_X POCKETJS_TOUCH_FLIP_Y \
 nickel_stop || fail "nickel would not stop; refusing to fight it for /dev/fb0"
 
 [ -f "$POCKETJS_LOG" ] && mv -f "$POCKETJS_LOG" "$POCKETJS_LOG.1"
-echo "pocketjs: fbink   $fbink"
 echo "pocketjs: logging $POCKETJS_LOG"
 
 POCKETJS_GUI_PAUSED=1
@@ -114,5 +96,4 @@ export POCKETJS_GUI_PAUSED
 "$POCKETJS_BIN" \
     --js "$POCKETJS_JS" \
     --pak "$POCKETJS_PAK" \
-    --fbink "$fbink" \
     "$@" >>"$POCKETJS_LOG" 2>&1

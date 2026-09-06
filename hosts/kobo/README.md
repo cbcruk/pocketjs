@@ -100,15 +100,20 @@ little they change:
    ```ini
    [DeveloperSettings]
    EnableDebugServices=true
-   ForceWifiOn=true
    ```
 
    Eject, reboot, join Wi-Fi, read the address off *Settings → Device
    information*, then `telnet <ip>` and log in as `root` with an empty
    password. Deleting the two lines undoes it.
-2. **KOReader.** Its *Tools → SSH* server is a real SSH daemon, and the same
-   install directory carries the FBInk CLI this host needs (see below), so one
-   install covers both prerequisites.
+
+   **Do not add `ForceWifiOn=true`.** It is the obvious way to stop a
+   development session losing the network it arrived on, and it also keeps the
+   device talking to Kobo. One left overnight took a firmware update spanning
+   a decade, came back with a garbled panel and an unresponsive digitizer, and
+   eventually factory-restored itself. Turn the radio on by hand instead.
+2. **KOReader.** Its *Tools → SSH* server is a real SSH daemon, which is a
+   nicer channel than telnet and does not depend on the firmware's debug
+   services being what you expect.
 
 ## Running on the device
 
@@ -121,7 +126,6 @@ pocketjs-kobo --probe-touch      # report live touch coordinates
 | Option | Env | Default |
 | --- | --- | --- |
 | `--framebuffer PATH` | `POCKETJS_FRAMEBUFFER` | `/dev/fb0` |
-| `--fbink PATH` | `POCKETJS_FBINK` | `/mnt/onboard/.apps/pocketjs/bin/fbink` |
 | `--present-hz N` | `POCKETJS_PRESENT_HZ` | 30 |
 | `--motion-waveform DU\|A2` | `POCKETJS_MOTION_WAVEFORM` | `DU` |
 | `--ghost-budget N` | `POCKETJS_GHOST_BUDGET` | 80 |
@@ -201,31 +205,24 @@ cannot also page the Kobo UI underneath it.
 `SIGHUP` reloads JS/pak at the next 60 Hz frame boundary; `SIGINT`/`SIGTERM`
 exit cleanly after a final refresh.
 
-### FBInk is a runtime dependency, not a linked library
+### The panel update is an ioctl, not a helper
 
-The host writes pixels itself and shells out to an independently installed
-FBInk CLI for the panel update, so FBInk's per-generation Kobo mxcfb quirks
-never have to be open-coded here. Install FBInk on the device and point
-`--fbink` at it.
+This host used to shell out to an installed FBInk CLI, on the reasoning that
+FBInk carries Kobo's per-generation mxcfb quirks so the host need not. That
+convenience had a price and it came due: FBInk is a hard-float binary, the
+Glo's 2012 firmware ships a soft-float userspace, and a static-musl host that
+needs nothing at all could not start it. One dynamic dependency tied the whole
+runtime to a particular firmware.
 
-FBInk publishes source tarballs only, and building one means standing up
-[koxtoolchain](https://github.com/koreader/koxtoolchain) first. The shortcut is
-that a KOReader install already ships a Kobo-native `fbink` binary in its own
-directory — `koreader.sh` drives the panel with it — so
-`/mnt/onboard/.adds/koreader/fbink` is the first path `device/pocketjs.sh`
-looks for.
+The update now goes straight to the driver. There is one device to support and
+its interface is fixed — a Mark 4 i.MX50 on the NTX 2.6.35 kernel, taking
+`mxcfb_update_data_v1_ntx` on `MXCFB_SEND_UPDATE`. The constants are
+transcribed from FBInk's `eink/mxcfb-kobo.h`, which remains the reference for
+what they mean; a test recomputes the `_IOW` encodings so a mistyped one fails
+the build rather than the panel, and a `const` assertion pins the struct at the
+68 bytes the ioctl number encodes.
 
-The host issues:
-
-```sh
-fbink -q -s top=<y>,left=<x>,width=<w>,height=<h> -W <AUTO|DU|A2|GC16> [-f]
-```
-
-**Kobo-specific caveat to verify on device:** FBInk documents that on Kobo the
-`-s` rectangle is *passed as-is to the ioctl, with no viewport or rotation
-quirks applied*. The host computes that rectangle in the same coordinate space
-it uses to write `/dev/fb0`, so the two should agree — but this is the first
-thing to check if refreshes land in the wrong place.
+Nothing needs installing on the device beyond this binary and the bundle.
 
 ### Device scripts
 

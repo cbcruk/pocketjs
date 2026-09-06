@@ -19,7 +19,7 @@ use input::{ContactReport, Input, PowerKey};
 use pocket_mod::Guest;
 use pocket_ui_surface::UiSurface;
 use pocketjs_core::spec;
-use refresh::{FbInk, RefreshPolicy, Waveform};
+use refresh::{Epdc, RefreshPolicy, Waveform};
 use signal_hook::consts::signal::{SIGHUP, SIGINT, SIGTERM};
 
 const HOST_ID: &str = "kobo-glo";
@@ -59,7 +59,6 @@ struct Args {
     js: PathBuf,
     pak: PathBuf,
     framebuffer: PathBuf,
-    fbink: PathBuf,
     present_hz: u32,
     motion_waveform: Waveform,
     ghost_budget: u32,
@@ -77,8 +76,6 @@ impl Args {
             js: env_path("POCKET_JS").unwrap_or_else(|| "app.js".into()),
             pak: env_path("POCKET_PAK").unwrap_or_else(|| "app.pak".into()),
             framebuffer: env_path("POCKETJS_FRAMEBUFFER").unwrap_or_else(|| "/dev/fb0".into()),
-            fbink: env_path("POCKETJS_FBINK")
-                .unwrap_or_else(|| "/mnt/onboard/.apps/pocketjs/bin/fbink".into()),
             present_hz: env_parse("POCKETJS_PRESENT_HZ")?.unwrap_or(30),
             motion_waveform: Waveform::parse_motion(
                 &std::env::var("POCKETJS_MOTION_WAVEFORM").unwrap_or_else(|_| "DU".into()),
@@ -115,7 +112,6 @@ impl Args {
                 "--js" => args.js = value(&mut index)?.into(),
                 "--pak" => args.pak = value(&mut index)?.into(),
                 "--framebuffer" => args.framebuffer = value(&mut index)?.into(),
-                "--fbink" => args.fbink = value(&mut index)?.into(),
                 "--present-hz" => {
                     args.present_hz = value(&mut index)?
                         .parse()
@@ -179,7 +175,6 @@ Usage:
 
 Options:
   --framebuffer PATH       Linux framebuffer (default /dev/fb0)
-  --fbink PATH             external FBInk CLI
   --present-hz N           physical refresh cap, 1..60 (default 30)
   --motion-waveform DU|A2  fast shallow-refresh waveform (default DU)
   --ghost-budget N         fast updates before a full GC16 cleanup
@@ -195,7 +190,7 @@ Set POCKETJS_PROFILE_SECS=N to log where each logic tick's time goes.
 
 SIGHUP reloads JS/pak at the next 60Hz frame boundary. SIGINT/SIGTERM exit.
 The matching environment variables are POCKET_JS, POCKET_PAK,
-POCKETJS_FRAMEBUFFER, POCKETJS_FBINK, POCKETJS_PRESENT_HZ,
+POCKETJS_FRAMEBUFFER, POCKETJS_PRESENT_HZ,
 POCKETJS_MOTION_WAVEFORM, POCKETJS_GHOST_BUDGET, POCKETJS_ROTATION and
 POCKETJS_SIM_HZ.
 Touch calibration is environment-only and applied in this order:
@@ -577,8 +572,8 @@ fn main() -> Result<()> {
         .grab_selected()
         .context("claiming the Kobo touchscreen")?;
 
-    let mut fbink = FbInk::new(&args.fbink)?;
-    log::info!("kobo refresh helper: {}", fbink.path().display());
+    let mut fbink = Epdc::new(&args.framebuffer)?;
+    log::info!("kobo panel updates: {}", fbink.path().display());
     let mut refresh = RefreshPolicy::new(
         info.width,
         info.height,

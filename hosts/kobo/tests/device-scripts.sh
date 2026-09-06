@@ -83,11 +83,7 @@ cat >"$APP/pocketjs-kobo" <<'STUB'
 echo "host args: $*"
 exit "${HOST_EXIT:-0}"
 STUB
-cat >"$APP/bin/fbink" <<'STUB'
-#!/bin/sh
-exit 0
-STUB
-chmod +x "$APP/pocketjs-kobo" "$APP/bin/fbink"
+chmod +x "$APP/pocketjs-kobo"
 : >"$APP/app.js"
 : >"$APP/app.pak"
 
@@ -164,7 +160,6 @@ echo running >"$NICKEL_STATE"
 check "a clean session exits 0" "0" "$(launch --present-hz 20)"
 check "the UI is restored after a clean session" "running" "$(await_nickel)"
 contains "host options are passed through" "--present-hz 20" "$APP/pocketjs.log"
-contains "the resolved FBInk path is passed" "bin/fbink" "$APP/pocketjs.log"
 check "the lock is released" "gone" \
     "$([ -d "$POCKETJS_LOCK" ] && echo held || echo gone)"
 
@@ -185,13 +180,15 @@ mkdir -p "$POCKETJS_LOCK"
 echo 999999 >"$POCKETJS_LOCK/pid"
 check "a stale lock is cleared" "0" "$(launch)"
 
+# The panel update is an ioctl now, so a missing bundle is the earliest thing
+# that can fail. What matters is unchanged: refuse before touching the UI.
 echo running >"$NICKEL_STATE"
-mv "$APP/bin/fbink" "$WORK/fbink.hidden"
-check "a missing FBInk fails the launch" "1" "$(launch)"
-contains "the failure explains itself" "no FBInk CLI found" "$WORK/out"
+mv "$APP/app.pak" "$WORK/pak.hidden"
+check "a missing pak fails the launch" "1" "$(launch)"
+contains "the failure explains itself" "pak not readable" "$WORK/out"
 check "the UI is never stopped when the launch fails early" "running" \
     "$(cat "$NICKEL_STATE")"
-mv "$WORK/fbink.hidden" "$APP/bin/fbink"
+mv "$WORK/pak.hidden" "$APP/app.pak"
 
 echo
 if [ "$FAILURES" -eq 0 ]; then
