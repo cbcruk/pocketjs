@@ -155,6 +155,22 @@ check "restarting hands dhcpcd back to nickel" "killed" \
     "$(grep -qx dhcpcd "$KILLED_LOG" && echo killed || echo spared)"
 await_nickel >/dev/null
 
+echo "-- remote access is opt-in --"
+# A root shell with no password should never appear because a device booted.
+cat >"$WORK/bin/telnetd" <<'STUB'
+#!/bin/sh
+echo telnetd >>"$WORK_MARKER"
+STUB
+chmod +x "$WORK/bin/telnetd"
+WORK_MARKER="$WORK/remote.marker"
+export WORK_MARKER
+: >"$WORK_MARKER"
+echo running >"$NICKEL_STATE"
+launch >/dev/null
+check "no REMOTE file means no telnetd" "quiet" \
+    "$([ -s "$WORK_MARKER" ] && echo started || echo quiet)"
+await_nickel >/dev/null
+
 echo "-- pocketjs.sh --"
 echo running >"$NICKEL_STATE"
 check "a clean session exits 0" "0" "$(launch --present-hz 20)"

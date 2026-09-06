@@ -86,6 +86,19 @@ POCKETJS_TOUCH_Y_MAX="${POCKETJS_TOUCH_Y_MAX:-757}"
 export POCKETJS_TOUCH_SWAP_XY POCKETJS_TOUCH_FLIP_X POCKETJS_TOUCH_FLIP_Y \
     POCKETJS_TOUCH_X_MAX POCKETJS_TOUCH_Y_MAX
 
+# Optional remote access, opted into by a file rather than by default. Booted
+# from rcS there is no UI to turn Wi-Fi on with, and no nickel to run telnetd,
+# so without this the device is unreachable and every change costs a trip
+# through the card reader. It is off unless asked for because what it opens is
+# a root shell with no password on the local network — the firmware's own
+# debug behaviour, but not something a device should do silently.
+if [ -e "$POCKETJS_DIR/REMOTE" ]; then
+    sh "$POCKETJS_DIR/wifi.sh" up || echo "pocketjs: could not bring Wi-Fi up" >&2
+    if ! pidof telnetd >/dev/null 2>&1; then
+        telnetd && echo "pocketjs: telnetd listening"
+    fi
+fi
+
 nickel_stop || fail "nickel would not stop; refusing to fight it for /dev/fb0"
 
 [ -f "$POCKETJS_LOG" ] && mv -f "$POCKETJS_LOG" "$POCKETJS_LOG.1"
