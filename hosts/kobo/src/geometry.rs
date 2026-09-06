@@ -94,7 +94,14 @@ impl Geometry {
         let rotation = match requested {
             Some(rotation) => rotation,
             None if (panel_w, panel_h) == (render_w, render_h) => Rotation::R0,
-            None if (panel_w, panel_h) == (render_h, render_w) => Rotation::R90,
+            // A swapped raster says the axes are exchanged; it cannot say which
+            // way round, because R90 and R270 both map one onto the other. That
+            // is a property of the panel's scan direction, so it had to be
+            // measured: on a Glo booted straight from rcS — where the
+            // framebuffer comes up landscape because nickel never rotated it —
+            // R90 draws the screen upside down and R270 draws it upright.
+            // `--rotation` overrides this for a panel that disagrees.
+            None if (panel_w, panel_h) == (render_h, render_w) => Rotation::R270,
             None => {
                 bail!(
                     "framebuffer is {panel_w}x{panel_h}, but kobo-glo requires \
@@ -189,8 +196,10 @@ mod tests {
     fn auto_accepts_exact_portrait_and_landscape_only() {
         let portrait = Geometry::exact(379, 512, 2, 758, 1024, None).unwrap();
         assert_eq!(portrait.rotation, Rotation::R0);
+        // R90 and R270 both fit a swapped raster, so this is not derived — it
+        // is the one measured on a Glo, where R90 comes out upside down.
         let landscape = Geometry::exact(379, 512, 2, 1024, 758, None).unwrap();
-        assert_eq!(landscape.rotation, Rotation::R90);
+        assert_eq!(landscape.rotation, Rotation::R270);
         assert!(Geometry::exact(379, 512, 2, 1200, 1600, None).is_err());
     }
 
