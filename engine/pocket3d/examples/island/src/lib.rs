@@ -330,9 +330,17 @@ impl Island {
         if self.action == a {
             return;
         }
+        let phase = if matches!(self.action, Action::Walk | Action::Run)
+            && matches!(a, Action::Walk | Action::Run)
+        {
+            self.action_time / self.actor.clips[self.actor.clip(self.clip_name()).unwrap()].duration
+        } else {
+            0.
+        };
         self.old_locals.clone_from(&self.locals);
         self.action = a;
-        self.action_time = 0.;
+        self.action_time =
+            phase * self.actor.clips[self.actor.clip(self.clip_name()).unwrap()].duration;
         self.blend = 0.;
     }
     pub fn walkable(x: f32, z: f32) -> bool {
@@ -368,7 +376,9 @@ impl Island {
         self.previous_yaw = self.yaw;
         self.previous_camera = self.camera;
         self.tick += 1;
-        self.action_time += STEP;
+        if !matches!(self.action, Action::Walk | Action::Run) {
+            self.action_time += STEP;
+        }
         let mut dir = Vec3::new(
             if input.x.is_finite() {
                 input.x.clamp(-1., 1.)
@@ -424,8 +434,8 @@ impl Island {
             Action::SitDown | Action::SitIdle | Action::StandUp
         ) {
             if moving {
-                self.change(if input.run { Action::Run } else { Action::Walk });
                 let step = dir * (if input.run { 2.65 } else { 1.45 }) * STEP;
+                let previous = self.position;
                 let next = self.position + step;
                 if Self::walkable(next.x, self.position.z) {
                     self.position.x = next.x;
@@ -433,10 +443,25 @@ impl Island {
                 if Self::walkable(self.position.x, next.z) {
                     self.position.z = next.z;
                 }
-                let target = libm::atan2f(dir.x, dir.z);
-                let delta =
-                    libm::atan2f(libm::sinf(target - self.yaw), libm::cosf(target - self.yaw));
-                self.yaw += delta * 0.24;
+                let travelled = self.position - previous;
+                let distance = travelled.length();
+                if distance > 1e-6 {
+                    self.change(if input.run { Action::Run } else { Action::Walk });
+                    let stride = if input.run {
+                        layout::RUN_STRIDE
+                    } else {
+                        layout::WALK_STRIDE
+                    };
+                    let duration =
+                        self.actor.clips[self.actor.clip(self.clip_name()).unwrap()].duration;
+                    self.action_time += distance / stride * duration;
+                    let target = libm::atan2f(travelled.x, travelled.z);
+                    let delta =
+                        libm::atan2f(libm::sinf(target - self.yaw), libm::cosf(target - self.yaw));
+                    self.yaw += delta * 0.24;
+                } else if matches!(self.action, Action::Walk | Action::Run) {
+                    self.change(Action::Idle);
+                }
             } else if matches!(self.action, Action::Walk | Action::Run) {
                 self.change(Action::Idle)
             }
@@ -585,6 +610,110 @@ impl Island {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn locomotion_clock_tracks_actual_distance_and_preserves_gait_phase() {
+        for run in [false, true] {
+            for amount in [0.25, 0.55, 1.] {
+                let mut s = Island::new();
+                s.position = Vec3::new(0., 0.11, 2.);
+                let start = s.position;
+                for _ in 0..12 {
+                    s.advance(Input {
+                        z: amount,
+                        run,
+                        ..Input::default()
+                    });
+                }
+                let duration = s.actor.clips[s.actor.clip(s.clip_name()).unwrap()].duration;
+                let stride = if run {
+                    layout::RUN_STRIDE
+                } else {
+                    layout::WALK_STRIDE
+                };
+                assert!(
+                    (s.action_time / duration - (s.position - start).length() / stride).abs()
+                        < 1e-5
+                );
+                let phase = s.action_time / duration;
+                let previous = s.position;
+                s.advance(Input {
+                    z: amount,
+                    run: !run,
+                    ..Input::default()
+                });
+                let duration = s.actor.clips[s.actor.clip(s.clip_name()).unwrap()].duration;
+                let stride = if run {
+                    layout::WALK_STRIDE
+                } else {
+                    layout::RUN_STRIDE
+                };
+                assert!(
+                    (s.action_time / duration - phase - (s.position - previous).length() / stride)
+                        .abs()
+                        < 1e-5
+                );
+            }
+        }
+        let mut s = Island::new();
+        s.position = Vec3::new(0., 0.17, 9.09);
+        s.change(Action::Run);
+        s.advance(Input {
+            z: 1.,
+            run: true,
+            ..Input::default()
+        });
+        assert_eq!(
+            s.action,
+            Action::Idle,
+            "a blocked avatar must not run in place"
+        );
+        assert_eq!(s.position.z, 9.09);
+    }
+
+    #[test]
+    fn authored_stance_feet_stay_planted_at_walk_and_run_speeds() {
+        for (action, stride, stance) in [
+            (Action::Walk, layout::WALK_STRIDE, 0.55),
+            (Action::Run, layout::RUN_STRIDE, 0.34),
+        ] {
+            for speed in [0.5, 2.65] {
+                let mut s = Island::new();
+                s.change(action);
+                s.blend = 1.;
+                let duration = s.actor.clips[s.actor.clip(s.clip_name()).unwrap()].duration;
+                for (name, offset) in [("foot.L", 0.), ("foot.R", 0.5)] {
+                    let foot = s.actor.names.iter().position(|n| n == name).unwrap();
+                    let mut planted: Option<Vec3> = None;
+                    for i in 0..24 {
+                        // Exclude the contact edges where sampled TRS blends
+                        // the incoming swing with the first planted pose.
+                        let phase = offset + 0.07 + (stance - 0.14) * i as f32 / 23.;
+                        let time = phase * stride / speed;
+                        s.position = Vec3::new(0., 0.11, 2. + time * speed);
+                        s.action_time = time * speed / stride * duration;
+                        s.animate();
+                        let p = s
+                            .render_model
+                            .transform_point3(s.globals[foot].w_axis.truncate());
+                        if let Some(anchor) = planted {
+                            assert!(
+                                (p.z - anchor.z).abs() < 0.012,
+                                "{action:?} {name} at speed {speed}: foot drift {}",
+                                p.z - anchor.z
+                            );
+                        } else {
+                            planted = Some(p);
+                        }
+                        assert!(
+                            (p.y - 0.215).abs() < 0.012,
+                            "{action:?} {name}: contact height {}",
+                            p.y
+                        );
+                    }
+                }
+            }
+        }
+    }
     #[test]
     fn presentation_interpolates_motion_without_advancing_simulation() {
         let mut s = Island::new();

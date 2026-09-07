@@ -15,3 +15,5 @@ pub const COLLIDERS: &[(f32,f32,f32)] = &[
     (-3.50000, 5.40000, 0.42000),
 ];
 pub const BENCH: (f32,f32,f32) = (3.05, -0.55, 0.38);
+pub const WALK_STRIDE: f32 = 0.88;
+pub const RUN_STRIDE: f32 = 1.2;

@@ -115,6 +115,13 @@ Expression visibility switches at a simulation tick to prevent double faces.
 Tests compare the completed pose with per-step skinning and verify that
 intermediate presentations preserve simulation state.
 
+**Locomotion phase advances by distance travelled after collision**, divided
+by the stride authored with each clip. Partial Circle Pad input reduces cadence;
+a blocked avatar returns to idle. Walk/run switches retain gait phase. The
+Blender generator solves the two leg joints from a planted-foot segment and a
+short swing arc, and exports the stride with the assets. Tests verify stance
+foot drift and height within **1.2 cm** at two movement speeds for both clips.
+
 The host requests **New 3DS CPU speedup**, matching the PocketJS host. Old 3DS
 keeps its supported clock. Material color roots are reused within each run of
 vertices with the same color; joint visibility is computed once per pose.
@@ -249,7 +256,11 @@ skinning, and 13.29 ms in the overlapping GPU queue. That report identified
 repeated skinning during simulation catch-up. A paired connection to the next
 build, `9a212c9229d6`, measured **19.30 FPS**, 51.82 ms per frame, 33.42 ms in
 update plus skinning, 8.37 ms in upload and 13.10 ms in the overlapping GPU queue
-with the panel open. The New 3DS speedup, reduced meshes and interpolated
-presentation build awaits its console measurement. Keyboard entry, Circle Pad feel and Homebrew
+with the panel open. Build `ed0a040cc443` then measured **59.80–59.87 FPS**
+over 780 frames across standing, walking, running, waving, sitting and standing
+up, with the panel closed. Its first connected measurement reported **5.48 ms
+update/skin and 1.85 ms upload**. These receipts come from the physical console;
+the benchmark inputs were remote. The subsequent distance-driven gait build
+needs its own console measurement. Keyboard entry, Circle Pad feel and Homebrew
 Launcher return remain separate physical interaction checks. The 30 Hz
 simulation is a chosen update rate, not a measured performance result.

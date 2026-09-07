@@ -9,7 +9,7 @@
       "action": 0,
       "expression": 0,
       "messages": 0,
-      "vertices": 24960,
+      "vertices": 16008,
       "perf_panel": 0
     },
     {
@@ -20,7 +20,7 @@
       "action": 1,
       "expression": 0,
       "messages": 0,
-      "vertices": 24960,
+      "vertices": 16008,
       "perf_panel": 0
     },
     {
@@ -31,7 +31,7 @@
       "action": 2,
       "expression": 0,
       "messages": 0,
-      "vertices": 24960,
+      "vertices": 16008,
       "perf_panel": 0
     },
     {
@@ -42,7 +42,7 @@
       "action": 6,
       "expression": 0,
       "messages": 0,
-      "vertices": 24960,
+      "vertices": 16008,
       "perf_panel": 0
     },
     {
@@ -53,7 +53,7 @@
       "action": 6,
       "expression": 1,
       "messages": 1,
-      "vertices": 23760,
+      "vertices": 15336,
       "perf_panel": 0
     },
     {
@@ -64,7 +64,7 @@
       "action": 3,
       "expression": 1,
       "messages": 1,
-      "vertices": 23760,
+      "vertices": 15336,
       "perf_panel": 0
     },
     {
@@ -75,7 +75,7 @@
       "action": 4,
       "expression": 1,
       "messages": 1,
-      "vertices": 23760,
+      "vertices": 15336,
       "perf_panel": 0
     },
     {
@@ -86,7 +86,7 @@
       "action": 5,
       "expression": 1,
       "messages": 1,
-      "vertices": 23760,
+      "vertices": 15336,
       "perf_panel": 0
     },
     {
@@ -97,7 +97,7 @@
       "action": 0,
       "expression": 1,
       "messages": 1,
-      "vertices": 23760,
+      "vertices": 15336,
       "perf_panel": 0
     },
     {
@@ -108,7 +108,7 @@
       "action": 7,
       "expression": 5,
       "messages": 1,
-      "vertices": 25176,
+      "vertices": 16224,
       "perf_panel": 0
     },
     {
@@ -119,28 +119,29 @@
       "action": 0,
       "expression": 5,
       "messages": 1,
-      "vertices": 25176,
+      "vertices": 16224,
       "perf_panel": 1
     }
   ],
   "validation": {
-    "portable_tests": 10,
+    "portable_tests": 12,
     "desktop_pocket3d_tests": 21,
     "clippy": "pass",
     "glb_clips": 18,
     "gpu_capture": "Azahar 2125.1.2 software rasterizer, native 400x240 + 320x240",
-    "hardware": "original instrumented build: 8.92 FPS over 851 frames with panel closed; optimized build remeasurement pending",
+    "hardware": "physical build 9a212c9229d6: 19.30 FPS, 51.82 ms/frame, 33.42 ms update/skin, 8.37 ms upload, 13.10 ms overlapping GPU, panel open; build ed0a040c uploaded and read back byte-exactly, remeasurement pending",
     "network": "local only",
     "performance_stats": "pass: native C FPS, percentile, stall, reset and bounded-history tests",
     "performance_menu": "pass: Azahar native chord open/hold/close/release, GPU readback and SD export",
     "runtime_wire_tests": 12,
-    "live_devlink": "pass: Azahar authenticated TCP, guest-package rejection, live JS replacement/rejection/timeout, chat and position preservation, remote input, paired GPU screenshot"
+    "live_devlink": "pass: Azahar authenticated TCP, guest-package rejection, live JS replacement/rejection/timeout, chat and position preservation, remote input, paired GPU screenshot",
+    "live_camera": "pass: Azahar accepted camera span edit, invalid bound rejected with active script retained, original camera restored"
   },
   "sha256": {
-    "release_3dsx": "f93ba2c11a2aeb3e3235da67ddfcbc839754431f237bdb620f5c8a6810cd9e0a",
-    "capture_3dsx": "00293de201ba77ea53298d96de77e26a08328a38fd67bd72f47f1ff42984b106",
-    "mira_glb": "90a88b990576a3d182106c53bc6e207a5fcd7ebebdd2aff69af620391b1ab331",
-    "mira_p3m": "b7fe7a39580718ec116643c0b5e565a2fe4bf42f4cef0f629ba29602e21b145e"
+    "release_3dsx": "ccc0ee6692f1d6799e72a594a59e792f51f800d43c8b87a92b8c1f2bbf1971ed",
+    "capture_3dsx": "0fc837554ed71948074e9b20e5b6fe19deaa6bc35183a5b9953fb667e4b2623e",
+    "mira_glb": "c3b46987e3c7ce0be0bfc344f148ca22b156b903521bb2be3b55760d67549a60",
+    "mira_p3m": "1c4f08be7130a28540aaf1e48481a48f4a691defd0f12f7ad3e895fa66bb60b5"
   },
-  "source_revision": "9a212c9229d6dd8039740eb09db14c2f38802467"
+  "source_revision": "ed0a040cc4435db0cfe741dcdef5f0b31ca2e0de"
 }
