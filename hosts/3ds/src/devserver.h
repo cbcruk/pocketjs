@@ -44,6 +44,8 @@ void devserver_shutdown(void);
 void devserver_poll(void);
 bool devserver_active(void);
 bool devserver_connected(void);
+/* Native hosts can reuse control/capture without accepting guest packages. */
+void devserver_allow_packages(bool allowed);
 void devserver_snapshot(DevserverSnapshot *out);
 
 /* Pocket DevTools JSON-line transport exposed through ui.__dbg*. */

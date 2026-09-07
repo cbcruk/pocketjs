@@ -3,6 +3,8 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { encodePNG } from "../../../../../tests/png.ts";
+import { PocketRuntimeClient } from "../../../../../tools/3ds-runtime-client.ts";
+import { encodePocketRuntimePackageBegin, POCKET_RUNTIME_MSG } from "../../../../../contracts/spec/pocket-runtime-wire.ts";
 const root = resolve(import.meta.dir, "../../../../..");
 const out = `${root}/dist/island/e2e`;
 mkdirSync(out, { recursive: true });
@@ -10,7 +12,8 @@ const fixture = mkdtempSync(`${out}/run-`);
 const user = `${fixture}/Library/Application Support/Azahar`;
 const source = `${homedir()}/Library/Application Support/Azahar`;
 const app = process.env.AZAHAR ?? "/Applications/Azahar.app";
-const rom = `${root}/dist/island/capture/pocket-island.3dsx`;
+const live = process.env.ISLAND_LINK_E2E === "1";
+const rom = `${root}/dist/island/${live ? "release" : "capture"}/pocket-island.3dsx`;
 if (!existsSync(rom)) throw new Error("Build the capture binary with bun tools/island.ts capture");
 mkdirSync(`${user}/config`, { recursive: true });
 for (const dir of ["nand", "sysdata"]) if (existsSync(`${source}/${dir}`)) cpSync(`${source}/${dir}`, `${user}/${dir}`, { recursive: true });
@@ -23,6 +26,11 @@ for (const [key, value] of Object.entries({ graphics_api: process.env.ISLAND_GRA
   config = def.test(config) ? config.replace(def, `${key}\\default=false`) : config.replace(line, `${key}=${value}\n${key}\\default=false`);
 }
 writeFileSync(`${user}/config/qt-config.ini`, config);
+const token = crypto.getRandomValues(new Uint8Array(32));
+if (live) {
+  mkdirSync(`${user}/sdmc/pocketjs/runtime`, { recursive: true });
+  writeFileSync(`${user}/sdmc/pocketjs/runtime/dev.key`, Buffer.from(token).toString("hex") + "\n", { mode: 0o600 });
+}
 const captures = `${user}/sdmc/pocket-island`;
 const launchRom = `${fixture}/pocket-island.3dsx`;
 cpSync(rom, launchRom);
@@ -35,6 +43,57 @@ function ownedPids(): number[] {
   return Bun.spawnSync(["ps", "-axo", "pid=,command="]).stdout.toString().split("\n").filter(line => line.includes(`${app}/Contents/MacOS/azahar`) && line.includes(launchRom)).map(line => Number(line.trim().split(/\s+/)[0]));
 }
 try {
+  if (live) {
+    let client: PocketRuntimeClient | undefined;
+    const deadline = Date.now() + 60000;
+    while (!client && Date.now() < deadline) {
+      const candidate = new PocketRuntimeClient({ host: "127.0.0.1", token, timeoutMs: 3000 });
+      try { await candidate.connect(); client = candidate; }
+      catch { candidate.close(); await Bun.sleep(500); }
+    }
+    if (!client) throw new Error(`Native dev link did not listen: ${fixture}`);
+    try {
+      let seq = 0;
+      const request = async (t: string, fields: Record<string, unknown> = {}, response = "island.reply") => {
+        const id = `test-${++seq}`;
+        const reply = client!.waitForCtrl(m => m.t === response && m.id === id, 30000);
+        await client!.sendCtrl({ t, id, ...fields });
+        return await reply;
+      };
+      const initial = await request("island.stats", {}, "island.stats");
+      const packageVerdict = client.waitForCtrl(m => m.t === "runtime.install" && m.phase === "rejected");
+      await client.sendFrame(POCKET_RUNTIME_MSG.packageBegin, encodePocketRuntimePackageBegin(100, 123n));
+      await packageVerdict;
+      const original = readFileSync(`${root}/engine/pocket3d/examples/island/app.js`, "utf8");
+      const changed = original.replace("A little island, together.", "Linked without FTP.");
+      const reload = await request("island.reload", { source: changed });
+      if (reload.ok !== true) throw new Error(`Valid reload rejected: ${JSON.stringify(reload)}`);
+      const after = await request("island.stats", {}, "island.stats");
+      if (after.title !== "Linked without FTP." || Number(after.tick) < Number(initial.tick) || after.x !== initial.x || after.z !== initial.z) throw new Error("JS hot replacement reset native state or retained old UI");
+      const rejected = await request("island.reload", { source: "globalThis.islandApp = {" });
+      if (rejected.ok !== false || rejected.scriptHash !== reload.scriptHash) throw new Error("Invalid replacement discarded the running script");
+      const loop = await request("island.reload", { source: "while(true) {}" });
+      if (loop.ok !== false || loop.scriptHash !== reload.scriptHash) throw new Error("Unbounded script was accepted");
+      await request("island.event", { event: "message", text: "Live TCP message" });
+      const chat = await request("island.stats", {}, "island.stats");
+      if (Number(chat.messages) <= Number(after.messages)) throw new Error("Remote JS message did not reach native chat");
+      const tapeId = "move-tape";
+      const moved = client.waitForCtrl(m => m.t === "island.stats" && m.id === tapeId, 60000);
+      await client.sendCtrl({ t: "island.input", id: tapeId, x: 1, z: 0, frames: 15, flags: 1 });
+      const motion = await moved;
+      if (Number(motion.x) <= Number(chat.x)) throw new Error("Remote input did not move the character");
+      const shot = client.waitForScreenshot(90000);
+      await client.sendCtrl({ t: "screenshot" });
+      const screenshot = await shot;
+      writeFileSync(`${fixture}/live-screen.png`, screenshot.png);
+      const restored = await request("island.reload", { source: original });
+      if (restored.ok !== true || restored.scriptHash !== initial.scriptHash) throw new Error("Original script restoration failed");
+      const restoredState = await request("island.stats", {}, "island.stats");
+      if (restoredState.messages !== chat.messages || restoredState.x !== motion.x || Number(restoredState.tick) < Number(motion.tick)) throw new Error("Reload lost moved position, chat or simulation progress");
+      writeFileSync(`${fixture}/live-receipt.json`, JSON.stringify({ environment: "Azahar", initial, after, rejected, loop, chat, motion, restored, restoredState, screenshotFrame: screenshot.frame }, null, 2));
+      console.log(`PASS: authenticated TCP, JS replacement/rejection, live chat, remote movement and paired GPU screenshot. ${fixture}`);
+    } finally { client.close(); }
+  } else {
   const deadline = Date.now() + Number(process.env.ISLAND_E2E_TIMEOUT_MS ?? 120000);
   while (!existsSync(`${captures}/done`)) {
     if (Date.now() > deadline) throw new Error(`Timed out; inspect ${fixture}/console.log and ${user}/log/azahar_log.txt`);
@@ -62,6 +121,7 @@ try {
   writeFileSync(`${out}/latest/receipt.json`, JSON.stringify({ fixture, renderer: process.env.ISLAND_GRAPHICS_API ?? "0", frames: receipts }, null, 2));
   writeFileSync(`${out}/latest/perf.csv`, perf);
   console.log(`PASS: 11 paired GPU captures; movement, run, wave, sit, stand, expressions, chat and performance panel/export. ${out}/latest`);
+  }
 } finally {
   for (const pid of ownedPids()) { try { process.kill(pid, "SIGKILL"); } catch {} }
 }

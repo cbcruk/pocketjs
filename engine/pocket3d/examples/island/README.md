@@ -13,6 +13,7 @@ From the repository root, with Bun, Docker, and Rust installed:
 
 ```sh
 rustup toolchain install nightly-2026-07-02 --profile minimal --component rust-src
+cargo fetch --locked --manifest-path hosts/psp/Cargo.toml
 bun island build
 bun island run
 ```
@@ -39,11 +40,49 @@ entry and a seven-second bubble attached to Mira's animated head. It does not
 connect to a server, transmit voice, or represent another player's avatar.
 The UI identifies the room and delivery as local.
 
+## Connected development
+
+**The running native app reuses Pocket Runtime's authenticated TCP transport
+on port 8131.** It uses the console's existing `pocketjs/runtime/dev.key`.
+Pair an unpaired console once with `bun tools/3ds-dev.ts pair --host <ip>`
+while ftpd is open, then launch Pocket Island. After this native version is
+installed, screenshot requests, performance reads and application JavaScript
+updates run over the development connection.
+
+```sh
+bun island probe --host <ip>       # dual-screen GPU capture and live timings
+bun island dev --host <ip>         # watch app.js and replace it after edits
+bun island push --host <ip>        # replace app.js once
+bun island bench --host <ip>       # bounded remote movement/emote tape
+```
+
+`--key <file>` selects an existing pairing key from another checkout.
+Without `--host`, the tool discovers a paired `p3d-island` target.
+Screenshots and measurement receipts go to `dist/island/hardware/`.
+**Remote input receipts identify tool-driven actions**, not physical gestures.
+
+`app.js` owns the title, room label, quick phrases, message handling, expression
+selection and emote commands. The host runs these callbacks on input events;
+the per-vertex animation and rendering loops remain native. A script reload
+preserves the world, position, animation and conversation. A candidate context
+must evaluate, expose the versioned application object and pass its validation
+event before replacement. Source is bounded to 8192 bytes, each context to
+4 MiB, and execution uses a 50 ms interrupt deadline. Invalid candidates retain
+the current context. Accepted scripts are saved in the native app's own storage
+directory with the preceding source available as a boot fallback.
+
+The native adapter reports ABI 0 and rejects `.pocket` guest uploads; use
+`bun island push` for its application script. It does not advertise the retained
+PocketJS UI tree inspector. Changes to Rust/C, renderer or embedded Blender
+assets require a new `.3dsx` and a restart. They cannot be replaced through the
+JavaScript update command.
+
 ## Measure on a console
 
 **`L + R + SELECT` opens a performance panel on the lower screen.** It uses
 the same shortcut as Pocket Runtime, but is owned by this native host. This
-example does not link Pocket Runtime's development server or package inspector.
+example links the shared development transport and exposes native performance
+and application controls through its own adapter.
 `B` closes the panel, `X` saves the measurements, and `START` saves and exits
 to Homebrew Launcher. Circle Pad movement continues while the panel is open.
 
@@ -64,8 +103,13 @@ GPU queue completes; that overlapping queue duration must not be added to CPU
 stage times. Panel visibility is recorded per window because replacing the
 conversation UI changes rendering cost.
 
+Simulation catch-up samples the skeleton on each fixed step and skins the
+final pose once for presentation. The regression test compares every output
+vertex with per-step skinning through walking, running, sitting and waving.
+
 Samples remain in a bounded RAM buffer during gameplay. SD writes occur on
-`X` in the panel or on exit. Keyboard and export pauses reset the partial
+`X` in the panel or on exit. Keyboard, script replacement and screenshot
+readback pauses reset the partial
 sampling window. A forced shutdown loses unsaved samples.
 
 ## Character source
@@ -108,7 +152,9 @@ linear TRS channels. No Blender or glTF parser runs on the handheld.
 | `crates/pocket3d/src/anim.rs` | Existing desktop import path, re-exporting the same sampler |
 | `backends/citro3d` | Colored triangle buffers, PICA200 shader and depth / blend state |
 | `examples/island/src` | Fixed 30 Hz application state, collision, locomotion, emotes, face selection and conversation |
-| `examples/island/3ds` | Native lifecycle, controller mapping, dual-screen UI, software keyboard and C ABI adapter |
+| `examples/island/app.js` | Replaceable application labels, message handling and interaction commands |
+| `examples/island/3ds` | Native lifecycle, controller mapping, dual-screen UI, software keyboard, script adapter and C ABI |
+| `hosts/3ds/src/devserver.c` | Shared paired discovery, authenticated control, bounded socket pump and screenshot transport |
 | `examples/island/assets` | Blender source, exported character / island and generated scene layout |
 
 The native example does not run a PocketJS guest and is not a `.pocket`
@@ -146,6 +192,7 @@ bun island test
 cargo test --locked --manifest-path engine/Cargo.toml -p pocket3d --lib
 bun island capture
 bun island e2e
+ISLAND_LINK_E2E=1 bun island e2e
 ```
 
 The portable tests exercise mesh deformation, hand elevation during a wave,
@@ -166,7 +213,17 @@ checks the performance shortcut's open / hold / close behavior, release latch
 and SD report export. The native C statistics test checks measured FPS,
 stalls, percentile calculation and bounded history.
 
+The separate connection test boots the release binary with an isolated emulator
+pairing key. It verifies TCP authentication, accepted and rejected script
+replacements, initialization timeout, state preservation, remote chat, bounded
+movement and a dual-screen screenshot over the shared transport. Emulator timing
+in this test is not a physical-console measurement.
+
 A successful emulator run proves the native build and scripted interactions.
-Physical-console frame time, keyboard entry, Circle Pad feel and Homebrew
-Launcher return still require testing on a 3DS. The 30 Hz simulation is a
-chosen update rate, not a measured hardware performance result.
+The first console report, from build `71e89695638d`, measured **8.92 FPS** over
+851 frames with the panel closed: 112.10 ms per frame, 91.98 ms in update plus
+skinning, and 13.29 ms in the overlapping GPU queue. That report identified
+repeated skinning during simulation catch-up. The deferred-skinning build needs
+a new console measurement. Keyboard entry, Circle Pad feel and Homebrew
+Launcher return remain separate physical interaction checks. The 30 Hz
+simulation is a chosen update rate, not a measured performance result.

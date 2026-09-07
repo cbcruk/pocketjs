@@ -1,10 +1,10 @@
 name: Pocket Island
 on:
   pull_request:
-    paths: ['engine/pocket3d/crates/pocket3d-anim/**', 'engine/pocket3d/backends/citro3d/**', 'engine/pocket3d/examples/island/**', 'tools/island.ts', '.github/workflows/pocket-island.yml']
+    paths: ['engine/pocket3d/crates/pocket3d-anim/**', 'engine/pocket3d/backends/citro3d/**', 'engine/pocket3d/examples/island/**', 'tools/island.ts', 'tools/3ds.ts', 'hosts/3ds/src/devserver.*', 'hosts/3ds/src/dev_protocol.*', 'hosts/3ds/src/soc.*', 'hosts/3ds/src/runtime.h', 'hosts/3ds/include/pocket_core.h', '.github/workflows/pocket-island.yml']
   push:
     branches: [main]
-    paths: ['engine/pocket3d/crates/pocket3d-anim/**', 'engine/pocket3d/backends/citro3d/**', 'engine/pocket3d/examples/island/**', 'tools/island.ts', '.github/workflows/pocket-island.yml']
+    paths: ['engine/pocket3d/crates/pocket3d-anim/**', 'engine/pocket3d/backends/citro3d/**', 'engine/pocket3d/examples/island/**', 'tools/island.ts', 'tools/3ds.ts', 'hosts/3ds/src/devserver.*', 'hosts/3ds/src/dev_protocol.*', 'hosts/3ds/src/soc.*', 'hosts/3ds/src/runtime.h', 'hosts/3ds/include/pocket_core.h', '.github/workflows/pocket-island.yml']
 permissions:
   contents: read
 jobs:
@@ -20,7 +20,9 @@ jobs:
       - name: Portable animation, movement and chat contracts
         run: bun tools/island.ts test
       - name: Build native PICA200 app
-        run: bun tools/island.ts build
+        run: |
+          cargo fetch --locked --manifest-path hosts/psp/Cargo.toml
+          bun tools/island.ts build
       - uses: actions/upload-artifact@v4
         with:
           name: pocket-island-3ds

@@ -54,7 +54,7 @@ pub unsafe extern "C" fn island_free(s: *mut Island) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn island_step(s: *mut Island, x: f32, z: f32, flags: u32) {
     unsafe {
-        (*s).step(Input {
+        (*s).advance(Input {
             x,
             z,
             run: flags & 1 != 0,
@@ -169,4 +169,9 @@ pub unsafe extern "C" fn island_message(
             capacity,
         )
     }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn island_present(s: *mut Island) {
+    unsafe { (*s).rebuild_character() }
 }

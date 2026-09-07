@@ -3,6 +3,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { ensureQuickJs } from "./3ds.ts";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const app = `${root}/engine/pocket3d/examples/island`;
 // Same digest as the 3DS host: devkitARM, libctru, citro3d, citro2d, picasso.
@@ -32,6 +33,7 @@ if (command === "assets") {
   const revision = Bun.spawnSync(["git", "rev-parse", "--short=12", "HEAD"], { cwd: root }).stdout.toString().trim();
   const dirty = Bun.spawnSync(["git", "status", "--porcelain"], { cwd: root }).stdout.length > 0;
   const buildId = `${revision}${dirty ? "+dirty" : ""}`;
+  await ensureQuickJs(`${root}/dist/island/quickjs`, image, [{ hostPath: root, containerPath: "/repo" }]);
   await run(["docker", "run", "--rm", "-v", `${root}:/repo`, "-w", "/repo/engine/pocket3d/examples/island/3ds", image, "make", "-j4", `FLAVOR=${flavor}`, `BUILD_ID=${buildId}`]);
   const rom = `${root}/dist/island/${flavor}/pocket-island.3dsx`;
   if (!existsSync(rom)) throw new Error("Build did not produce the 3DSX");
@@ -39,6 +41,8 @@ if (command === "assets") {
   if (command === "run") await run(["open", "-a", process.env.AZAHAR ?? "/Applications/Azahar.app", "--args", rom]);
 } else if (command === "e2e") {
   await run(["bun", `${app}/scripts/azahar.ts`]);
+} else if (["probe", "push", "dev", "bench"].includes(command)) {
+  await run(["bun", `${app}/scripts/dev.ts`, command, ...process.argv.slice(3)]);
 } else {
-  throw new Error("Usage: bun tools/island.ts [assets|test|build|capture|run|e2e]");
+  throw new Error("Usage: bun tools/island.ts [assets|test|build|capture|run|e2e|probe|push|dev|bench]");
 }

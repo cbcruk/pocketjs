@@ -342,6 +342,12 @@ impl Island {
         }
     }
     pub fn step(&mut self, input: Input) {
+        self.advance(input);
+        self.rebuild_character();
+    }
+    /// Advance simulation and the small skeleton pose without skinning a mesh.
+    /// A host catching up several ticks presents only the final pose.
+    pub fn advance(&mut self, input: Input) {
         self.tick += 1;
         self.action_time += STEP;
         let mut dir = Vec3::new(
@@ -431,13 +437,17 @@ impl Island {
             self.position.z.clamp(-3.0, 4.5),
         );
         self.camera = self.camera.lerp(target, 0.075);
-        self.animate();
+        self.sample_pose();
     }
     fn near_bench(&self) -> bool {
         let (x, z, _) = layout::BENCH;
         (self.position.x - x).abs() < 0.1 && (self.position.z - z).abs() < 0.15
     }
     pub fn animate(&mut self) {
+        self.sample_pose();
+        self.rebuild_character();
+    }
+    fn sample_pose(&mut self) {
         let clip = &self.actor.clips[self.actor.clip(self.clip_name()).unwrap()];
         self.actor.skeleton.sample_locals(
             Some(clip),
@@ -472,6 +482,9 @@ impl Island {
         self.actor
             .skeleton
             .globals_from_locals(&self.locals, &mut self.globals);
+    }
+    /// Skin the last sampled pose once for the next submitted GPU frame.
+    pub fn rebuild_character(&mut self) {
         let model = Mat4::from_rotation_translation(Quat::from_rotation_y(self.yaw), self.position);
         self.actor
             .skin(&self.globals, model, &mut self.scratch, &mut self.character);
@@ -514,6 +527,33 @@ impl Island {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn deferred_skin_matches_each_tick_presentation_across_transitions() {
+        let mut immediate = Island::new();
+        let mut deferred = Island::new();
+        for frame in 0..150 {
+            for _ in 0..3 {
+                let input = Input {
+                    x: if frame < 30 { 1.0 } else { 0.0 },
+                    run: frame > 15 && frame < 30,
+                    sit: frame == 45 || frame == 75,
+                    wave: frame == 110,
+                    ..Input::default()
+                };
+                immediate.step(input);
+                deferred.advance(input);
+            }
+            deferred.rebuild_character();
+            assert_eq!(immediate.action, deferred.action);
+            assert_eq!(immediate.position, deferred.position);
+            assert_eq!(immediate.bubble_anchor(), deferred.bubble_anchor());
+            assert_eq!(immediate.character.len(), deferred.character.len());
+            for (a, b) in immediate.character.iter().zip(&deferred.character) {
+                assert_eq!(a.position, b.position);
+                assert_eq!(a.color, b.color);
+            }
+        }
+    }
     #[test]
     fn assets_have_live_motion_and_face_layers() {
         let mut s = Island::new();

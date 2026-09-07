@@ -10,6 +10,7 @@ typedef struct {
 Island *island_new(void);
 void island_free(Island *);
 void island_step(Island *, float x, float z, uint32_t flags);
+void island_present(Island *);
 void island_expression(Island *, uint32_t expression);
 const void *island_vertices(const Island *, bool terrain, uint32_t *count);
 void island_snapshot(const Island *, IslandSnapshot *);

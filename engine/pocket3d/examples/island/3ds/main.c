@@ -2,6 +2,7 @@
 #include "island.h"
 #include "pocket3d.h"
 #include "perf.h"
+#include "devlink.h"
 #include <3ds.h>
 #include <citro2d.h>
 #include <math.h>
@@ -79,9 +80,6 @@ static const char *actions[] = {
     "Enjoying the breeze", "Taking a walk",    "Running",
     "Sitting down",        "Taking a break",   "Getting up",
     "Waving hello",        "Feeling wonderful"};
-static const char *phrases[] = {"Hello, island!", "Let's take a walk.",
-                                "This is my happy place.",
-                                "See you by the sea!"};
 static char notice[64] = "Touch a phrase to say hello.";
 static uint32_t ink, paper, muted, mint, accent, linecol;
 static void rect(float x, float y, float w, float h, uint32_t c) {
@@ -158,6 +156,20 @@ static void send_text(const char *s) {
            : result == -2 ? "One moment before your next message."
                           : "Use 1 to 192 UTF-8 bytes of text.");
 }
+static uint32_t apply_command(const IslandCommand *command) {
+  if (command->expression >= 0) island_expression(island, command->expression);
+  if (command->message[0]) send_text(command->message);
+  return command->flags;
+}
+static uint32_t script_action(const char *event, int value, const char *text) {
+  IslandCommand command;
+  island_snapshot(island, &state);
+  if (!island_dev_event(event, value, state.expression, text, &command)) {
+    snprintf(notice, sizeof notice, "JavaScript error; see connected dev tools.");
+    return 0;
+  }
+  return apply_command(&command);
+}
 static void keyboard(void) {
   static SwkbdState keyboard;
   char output[193] = {0};
@@ -167,7 +179,7 @@ static void keyboard(void) {
   swkbdSetButton(&keyboard, SWKBD_BUTTON_LEFT, "Cancel", false);
   swkbdSetButton(&keyboard, SWKBD_BUTTON_RIGHT, "Say", true);
   if (swkbdInputText(&keyboard, output, sizeof output) == SWKBD_BUTTON_RIGHT)
-    send_text(output);
+    script_action("message", 0, output);
   perf_pause();
 }
 static void top_ui(void) {
@@ -179,7 +191,7 @@ static void top_ui(void) {
   roundrect(10, 10, 126, 31, 9, paper);
   text(19, 14, .46, ink, "POCKET ISLAND");
   roundrect(306, 10, 84, 23, 8, paper);
-  text(316, 14, .36, muted, "LOCAL ROOM");
+  text(316, 14, .36, muted, island_dev_script()->room);
   // A readable ground shadow roots the avatar in the 3D scene.
   char message[193];
   if (island_bubble(island, (uint8_t *)message, sizeof message)) {
@@ -228,8 +240,9 @@ static void perf_ui(void) {
   snprintf(row, sizeof row, "%u tris / %.1f ticks per frame / %u samples",
            (unsigned)((p->avatar_vertices + p->terrain_vertices) / 3), p->steps, perf.count);
   text(15, 186, .33, muted, row);
-  text(15, 203, .34, accent, perf_notice);
-  text(15, 221, .34, ink, "X save   B close   START save + exit");
+  text(15, 201, .30, accent, island_dev_status());
+  text(15, 211, .28, muted, perf_notice);
+  text(15, 225, .31, ink, "X save   B close   START save + exit");
 }
 static void bottom_ui(void) {
   C2D_Prepare();
@@ -242,7 +255,7 @@ static void bottom_ui(void) {
     return;
   }
   rect(0, 0, 320, 240, paper);
-  text(15, 9, .72, ink, "A little island, together.");
+  text(15, 9, .72, ink, island_dev_script()->title);
   text(16, 34, .37, muted, "MIRA  /  1 visitor  /  local demo");
   for (int i = 0; i < 2; i++) {
     roundrect(14 + i * 149, 56, 143, 27, 8, i == tab ? mint : linecol);
@@ -262,7 +275,7 @@ static void bottom_ui(void) {
     for (int i = 0; i < 4; i++) {
       float x = 14 + (i % 2) * 149, y = 139 + (i / 2) * 30;
       roundrect(x, y, 143, 25, 7, linecol);
-      text(x + 8, y + 5, .34, ink, phrases[i]);
+      text(x + 8, y + 5, .34, ink, island_dev_script()->phrases[i]);
     }
     roundrect(14, 202, 292, 27, 8, mint);
     centered(160, 207, .45, paper, "Y   Write a message");
@@ -297,18 +310,18 @@ static uint32_t touch_action(touchPosition p) {
     if (p.py >= 139 && p.py < 194 && p.px >= 14 && p.px < 306) {
       int col = p.px >= 163, row = (p.py - 139) / 30;
       if (row < 2)
-        send_text(phrases[row * 2 + col]);
+        return script_action("phrase", row * 2 + col, NULL);
     } else if (p.py >= 202 && p.py < 230)
       keyboard();
   } else {
     if (p.py >= 94 && p.py < 153 && p.px >= 14) {
       int i = (p.py - 94) / 32 * 4 + (p.px - 14) / 74;
       if (i < 7)
-        island_expression(island, i);
+        return script_action("expression", i, NULL);
     }
     if (p.py >= 166 && p.py < 195 && p.px >= 14 && p.px < 306) {
       int i = (p.px - 14) / 99;
-      return i == 0 ? 2 : i == 1 ? 4 : 8;
+      return script_action(i == 0 ? "wave" : i == 1 ? "sit" : "cheer", 0, NULL);
     }
   }
   return 0;
@@ -358,6 +371,10 @@ int main(void) {
   island = island_new();
   if (!island || !p3d_init(color_shbin, color_shbin_size))
     return 3;
+  if (!island_dev_init()) return 7;
+#ifdef ISLAND_CAPTURE
+  if (!island_dev_self_test()) return 8;
+#endif
   uint32_t n;
   const P3D_ColorVertex *v = island_vertices(island, true, &n);
   if (!p3d_mesh_create(&terrain, n) || !p3d_mesh_upload(&terrain, v, n) ||
@@ -390,6 +407,12 @@ int main(void) {
     }
     bool menu_input = perf_visible || perf_input_latched;
     if (menu_input) pending_actions = 0;
+    island_snapshot(island, &state);
+    island_dev_poll(&state, &perf, frame);
+    if (island_dev_pause_requested()) {
+      perf_pause();
+      last = osGetTime();
+    }
     circlePosition pad;
     hidCircleRead(&pad);
     float x = pad.dx / 156.f, z = -pad.dy / 156.f;
@@ -401,14 +424,17 @@ int main(void) {
       z = -1;
     if (held & KEY_DDOWN)
       z = 1;
-    uint32_t flags = (held & KEY_B ? 1 : 0) | (down & KEY_A ? 2 : 0) |
-                     (down & KEY_X ? 4 : 0);
-    if (menu_input) flags = 0;
+    uint32_t flags = !menu_input && (held & KEY_B) ? 1 : 0;
+    if (!menu_input && (down & KEY_A)) flags |= script_action("wave", 0, NULL);
+    if (!menu_input && (down & KEY_X)) flags |= script_action("sit", 0, NULL);
+    island_dev_input(&x, &z, &flags);
+    IslandCommand remote_command;
+    if (island_dev_command(&remote_command)) flags |= apply_command(&remote_command);
     island_snapshot(island, &state);
     if (!menu_input && (down & KEY_R))
-      island_expression(island, (state.expression + 1) % 7);
+      flags |= script_action("nextExpression", 0, NULL);
     if (!menu_input && (down & KEY_L))
-      island_expression(island, (state.expression + 6) % 7);
+      flags |= script_action("previousExpression", 0, NULL);
     if (!menu_input && (down & KEY_Y)) {
       keyboard();
       last = osGetTime();
@@ -475,6 +501,9 @@ int main(void) {
       pending_actions = 0;
       accumulator -= 1. / 30.;
     }
+    // Intermediate catch-up poses are never displayed; skin only the final
+    // pose. At 60 Hz, an unchanged 30 Hz pose can retain its vertex buffer.
+    if (steps) island_present(island);
     island_snapshot(island, &state);
     v = island_vertices(island, false, &n);
     timing[PERF_UPDATE] = elapsed_ms(stage_start, svcGetSystemTick());
@@ -526,6 +555,10 @@ int main(void) {
                   steps, n, terrain.count, state.action, perf_visible);
     perf_previous_end = end;
     frame++;
+    if (island_dev_capture(top, bottom, frame)) {
+      perf_pause();
+      last = osGetTime();
+    }
 #ifdef ISLAND_CAPTURE
     if (capture_frame(frame)) {
       gspWaitForVBlank();
@@ -566,6 +599,7 @@ int main(void) {
   p3d_mesh_free(&avatar[0]);
   p3d_mesh_free(&avatar[1]);
   p3d_exit();
+  island_dev_shutdown();
   island_free(island);
   C2D_TextBufDelete(textbuf);
   C2D_Fini();
