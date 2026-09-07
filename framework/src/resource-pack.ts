@@ -86,6 +86,10 @@ export function createPackedImageCollection<I>(
       throw Error("Invalid image envelope");
   const local = resourcePacks(),
     fallback = options.fallback;
+  // Installed names are immutable. An absent pack stays absent until the
+  // native realm changes; avoid probing SD on every desktop-only tile miss.
+  const absent = new Set<string>();
+  let generation = local?.session() ?? 0;
   const source = (raw: string) => {
     const record = JSON.parse(raw) as { local: boolean; ticket: string };
     const owner = record.local ? local : fallback?.client;
@@ -103,6 +107,10 @@ export function createPackedImageCollection<I>(
     maxCost: options.maxEntries * cost,
     load(input, complete) {
       const pack = options.pack(input);
+      if ((local?.session() ?? 0) !== generation) {
+        generation = local?.session() ?? 0;
+        absent.clear();
+      }
       let owner: ImageClient | undefined,
         id = 0,
         cancelled = false;
@@ -127,7 +135,7 @@ export function createPackedImageCollection<I>(
         );
         return !!id;
       };
-      if (local?.connected() && pack) {
+      if (local?.connected() && pack && !absent.has(pack.name)) {
         if (
           !/^[a-z0-9-]{1,48}$/.test(pack.name) ||
           !Number.isInteger(pack.entry) ||
@@ -142,6 +150,11 @@ export function createPackedImageCollection<I>(
           (result) => {
             if (cancelled) return;
             if (!result.ok && fallback) {
+              if (result.error === "Resource pack not installed") {
+                if (absent.size === 4)
+                  absent.delete(absent.values().next().value!);
+                absent.add(pack.name);
+              }
               if (!remote()) finish(true, result);
             } else finish(true, result);
           },

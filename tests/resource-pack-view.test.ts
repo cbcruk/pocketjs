@@ -158,7 +158,10 @@ test("missing packs and unsupported hosts resolve through the same desktop cache
       if (supported) {
         f.local!.step();
         f.replies.push(
-          JSON.stringify({ id: f.sent[0]!.id, error: "Not installed" }),
+          JSON.stringify({
+            id: f.sent[0]!.id,
+            error: "Resource pack not installed",
+          }),
         );
         f.local!.step();
       }
@@ -175,6 +178,13 @@ test("missing packs and unsupported hosts resolve through the same desktop cache
       expect(v.state("tile").status).toBe("ready");
       expect(sources).toEqual(["desktop"]);
       expect(f.remoteReleased).toEqual([16]);
+      c.clear();
+      runtime.step();
+      f.local?.step();
+      f.remote.step();
+      expect(f.sent).toHaveLength(supported ? 1 : 0);
+      expect(f.remoteSent).toHaveLength(2);
+
       dispose();
       expect(f.freed).toEqual([100]);
     });
