@@ -32,16 +32,24 @@ for attribute in virtual_size bits_per_pixel rotate stride name; do
 done
 command -v fbset >/dev/null 2>&1 && fbset -i
 
-section "fbink"
-for candidate in \
-    "$POCKETJS_DIR/bin/fbink" \
-    /mnt/onboard/.adds/koreader/fbink \
-    /usr/local/bin/fbink; do
-    if [ -x "$candidate" ]; then
-        echo "found: $candidate"
-        "$candidate" -e 2>&1 | tr ';' '\n'
-        break
-    fi
+section "remote"
+# What a takeover boot needs to be reachable, and what nickel used to provide.
+grep -q " /dev/pts " /proc/mounts 2>/dev/null &&
+    echo "devpts: mounted" || echo "devpts: NOT mounted"
+[ -e /dev/ptmx ] && echo "ptmx: present" || echo "ptmx: MISSING"
+# Started as a busybox applet the process is named busybox, so pidof telnetd
+# says no while you are reading this over it. Ask who holds the port.
+awk '$2 ~ /:0017$/ && $4 == "0A" { found = 1 } END { exit !found }' \
+    /proc/net/tcp 2>/dev/null &&
+    echo "telnet: port served" || echo "telnet: port NOT served"
+
+# Every writer to the hardware-status pipe parks here forever when nobody is
+# reading it, which is what happens once nickel is gone. Names, not a count:
+# this session and its own pipelines are in the list too.
+echo "parked on a pipe:"
+for entry in /proc/[0-9]*; do
+    [ "$(cat "$entry/wchan" 2>/dev/null)" = pipe_wait ] || continue
+    echo "  ${entry#/proc/} $(tr '\0' ' ' <"$entry/cmdline" 2>/dev/null)"
 done
 
 section "input"

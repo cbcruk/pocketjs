@@ -156,8 +156,12 @@ if [ -e "$POCKETJS_DIR/REMOTE" ]; then
         mknod /dev/ptmx c 5 2 && chmod 666 /dev/ptmx
     fi
 
-    if pidof telnetd >/dev/null 2>&1; then
-        echo "pocketjs: telnetd already running"
+    # Not `pidof telnetd`: started as a busybox applet the process is named
+    # busybox, so that asks a question it can never answer yes to. What we
+    # actually want to know is whether anything holds the port.
+    if awk '$2 ~ /:0017$/ && $4 == "0A" { found = 1 } END { exit !found }' \
+        /proc/net/tcp 2>/dev/null; then
+        echo "pocketjs: telnet port is already served"
     # The applet is inside busybox, but 2.1.5 ships no symlink for it, so
     # calling it by name finds nothing. root has an empty password field and
     # /bin/login exists, which is the same way in the firmware's own debug
