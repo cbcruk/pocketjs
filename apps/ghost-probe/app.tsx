@@ -12,12 +12,29 @@
 //             behind it — the clearest signal, and the one A2 is worst at.
 //   FLIP      blocks inverting in place. Residue appears as grey where black
 //             and white alternated, which is what DU leaves after many cycles.
-//   REFERENCE never repainted after the first frame. Anything that shows up
-//             here came from its neighbours, not from its own updates.
+//   REFERENCE never repainted after the first frame, and laid out clear of the
+//             bands above so the host's bounding-box update never reaches it.
+//             Anything that shows up here bled in from a neighbour.
 //
-// Tapping freezes every band. Frozen is when you judge: a moving panel hides
-// residue behind the next update. The header keeps counting so you can see
-// how far past the ghost budget the run is.
+// TWO THINGS THE HOST DOES DECIDE WHAT THIS APP MAY LOOK LIKE, and the first
+// version of it got both wrong:
+//
+//   The motion waveform is only used while the screen is MOVING, which
+//   Refresher defines as damage within MOTION_WINDOW (120ms) of the last.
+//   A probe stepping every 500ms is never moving by that definition: every
+//   update took the static path and rendered with Waveform::Auto, so three
+//   runs of --motion-waveform proved nothing about DU or A2. Step faster than
+//   that window or you are not testing what you think you are.
+//
+//   Going quiet triggers on_idle, which runs a full GC16 over everything that
+//   moved. So "freeze it and look" erases the residue 200ms before you look.
+//   Freezing here stops the bands but not the heartbeat, whose damage keeps
+//   the host in motion and the evidence on the panel.
+//
+// The heartbeat sits inside the sweep track on purpose: damage is merged into
+// ONE bounding box (merge_all), so a heartbeat in a far corner would stretch
+// every update across the whole panel and repaint the very residue we came
+// to read.
 import { For, createMemo, createSignal } from "solid-js";
 import { Text, View } from "@pocketjs/framework/components";
 import { onFrame } from "@pocketjs/framework/lifecycle";
@@ -30,9 +47,13 @@ const INK = "#000000";
 const MUTED = "#666666";
 const RULE = "#bbbbbb";
 
-const SWEEP_STEPS = 12;
-const SWEEP_TRACK = 331;
-const SWEEP_BAR = Math.floor(SWEEP_TRACK / SWEEP_STEPS);
+/** Seconds between steps. Must stay under the host's 120ms MOTION_WINDOW. */
+const STEP_SECONDS = 0.1;
+const SWEEP_STEPS = 11;
+const SWEEP_BAR = 26;
+/** Left edge of the heartbeat, clear of the bar's travel (10 * 26 + 26). */
+const HEARTBEAT_AT = 300;
+const HEARTBEAT_SIZE = 26;
 const FLIP_COLUMNS = 8;
 /** Greys the reference band is drawn in, darkest first. */
 const REFERENCE_GREYS = ["#000000", "#404040", "#808080", "#c0c0c0"] as const;
@@ -42,6 +63,9 @@ export default function GhostProbe() {
   // One integer drives every band, so a frozen probe is genuinely frozen:
   // nothing recomputes and the damage tracker finds nothing to repaint.
   const [step, setStep] = createSignal(0);
+  // Beats whether or not the bands do, so the host never sees the screen go
+  // quiet and never runs the cleanup that would wipe what we are reading.
+  const [beat, setBeat] = createSignal(0);
   const [frozen, setFrozen] = createSignal(false);
   let contactWasDown = false;
   let steppedAt = 0;
@@ -51,14 +75,11 @@ export default function GhostProbe() {
     if (down && !contactWasDown) setFrozen((value) => !value);
     contactWasDown = down;
 
-    if (frozen()) return;
-    // Twice a second. Faster than the panel can honestly present, and the
-    // bands blur into each other; slower and a session takes minutes to
-    // reach the ghost budget.
     const now = virtualNow();
-    if (now - steppedAt < 0.5) return;
+    if (now - steppedAt < STEP_SECONDS) return;
     steppedAt = now;
-    setStep((value) => value + 1);
+    setBeat((value) => value + 1);
+    if (!frozen()) setStep((value) => value + 1);
   });
 
   const sweepAt = createMemo(() => {
@@ -84,7 +105,8 @@ export default function GhostProbe() {
         </View>
         <Text class="text-xs" style={{ textColor: MUTED }}>
           {policy.presentHz}Hz 표시 · {simulationHz()}Hz 논리 ·{" "}
-          {frozen() ? "정지 — 지금 잔상을 본다" : "동작 중 — 누르면 멈춘다"}
+          {frozen() ? "정지 — 지금 잔상을 본다" : "동작 중 — 누르면 멈춘다"} ·{" "}
+          {beat()}
         </Text>
         <View class="mt-2 w-full h-[1]" style={{ bgColor: RULE }} />
       </View>
@@ -97,6 +119,14 @@ export default function GhostProbe() {
               bgColor: INK,
               insetL: sweepAt() * SWEEP_BAR,
               width: SWEEP_BAR,
+            }}
+          />
+          <View
+            class="absolute top-0 h-[44]"
+            style={{
+              bgColor: beat() % 2 === 0 ? INK : PAPER,
+              insetL: HEARTBEAT_AT,
+              width: HEARTBEAT_SIZE,
             }}
           />
         </View>
@@ -128,7 +158,10 @@ export default function GhostProbe() {
       <View class="absolute left-[24] right-[24] top-[380] flex-col gap-2">
         <View class="w-full h-[1]" style={{ bgColor: RULE }} />
         <Text class="text-xs" style={{ textColor: MUTED }}>
-          정지시킨 뒤 SWEEP의 지나간 자리와 FLIP의 경계를 본다.
+          정지해도 오른쪽 끝 사각형은 계속 깜빡인다 — 그게 멈춰 있으면
+        </Text>
+        <Text class="text-xs" style={{ textColor: MUTED }}>
+          호스트가 전면 정리를 걸어 증거를 지운 뒤다.
         </Text>
         <Text class="text-xs" style={{ textColor: MUTED }}>
           잔상이 거슬리면 --ghost-budget을 낮춘다. 전면 갱신이 잦아지고

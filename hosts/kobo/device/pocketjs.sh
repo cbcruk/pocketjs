@@ -107,9 +107,37 @@ status_drain_stop() {
     STATUS_DRAIN_PID=""
 }
 
+# /mnt/onboard is FAT32 and buffers writes, so a device that wedges hard enough
+# to need the power button loses whatever its log had to say — the one session
+# worth reading is the one guaranteed to be gone. Found that way: a freeze left
+# a zero-byte pocketjs.log.1. Flushing on a timer bounds the loss to the
+# interval instead of the whole session.
+SYNC_EVERY="${POCKETJS_SYNC_SECS:-20}"
+SYNC_PID=""
+
+log_flush_start() {
+    [ "$SYNC_EVERY" -gt 0 ] 2>/dev/null || return 0
+    (
+        while :; do
+            sleep "$SYNC_EVERY"
+            sync
+        done
+    ) >/dev/null 2>&1 &
+    SYNC_PID=$!
+    echo "pocketjs: flushing logs every ${SYNC_EVERY}s (pid $SYNC_PID)"
+}
+
+log_flush_stop() {
+    [ -n "$SYNC_PID" ] || return 0
+    kill "$SYNC_PID" 2>/dev/null
+    SYNC_PID=""
+    sync
+}
+
 cleanup() {
     status=$?
     trap - EXIT
+    log_flush_stop
     status_drain_stop
     nickel_start
     rm -rf "$POCKETJS_LOCK"
@@ -177,6 +205,7 @@ fi
 
 nickel_stop || fail "nickel would not stop; refusing to fight it for /dev/fb0"
 status_drain_start
+log_flush_start
 
 [ -f "$POCKETJS_LOG" ] && mv -f "$POCKETJS_LOG" "$POCKETJS_LOG.1"
 echo "pocketjs: logging $POCKETJS_LOG"
@@ -210,5 +239,8 @@ while :; do
         echo "pocketjs: restarting"
     fi
     [ -f "$POCKETJS_LOG" ] && mv -f "$POCKETJS_LOG" "$POCKETJS_LOG.1"
+    # Which options this run is about to use, on the card before it runs them.
+    # If it wedges, that line is the whole diagnosis.
+    sync
 done
 exit "$status"

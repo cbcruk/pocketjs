@@ -68,6 +68,7 @@ struct Args {
     probe: bool,
     probe_touch: bool,
     allow_active_gui: bool,
+    profile_secs: u64,
 }
 
 impl Args {
@@ -95,6 +96,7 @@ impl Args {
             probe: false,
             probe_touch: false,
             allow_active_gui: false,
+            profile_secs: env_parse("POCKETJS_PROFILE_SECS")?.unwrap_or(0),
         };
 
         let words = std::env::args().skip(1).collect::<Vec<_>>();
@@ -127,6 +129,11 @@ impl Args {
                 }
                 "--rotation" => args.rotation = Rotation::parse(value(&mut index)?)?,
                 "--sim-hz" => args.sim_hz = parse_sim_hz(value(&mut index)?)?,
+                "--profile-secs" => {
+                    args.profile_secs = value(&mut index)?
+                        .parse()
+                        .context("--profile-secs must be an integer")?
+                }
                 "--power-helper" => args.power_helper = Some(value(&mut index)?.into()),
                 "--no-power-key" => args.power_helper = None,
                 "--probe" => args.probe = true,
@@ -185,8 +192,8 @@ Options:
   --probe                  report framebuffer geometry and exit
   --probe-touch            report live touch coordinates until interrupted
   --allow-active-gui       explicit unsafe override of the nickel-pause guard
-
-Set POCKETJS_PROFILE_SECS=N to log where each logic tick's time goes.
+  --profile-secs N         log where each logic tick's time goes, every N s
+                           (POCKETJS_PROFILE_SECS sets the same thing)
 
 SIGHUP reloads JS/pak at the next 60Hz frame boundary. SIGINT/SIGTERM exit.
 The matching environment variables are POCKET_JS, POCKET_PAK,
@@ -630,7 +637,11 @@ fn main() -> Result<()> {
 
     // Opt-in, because a report every few seconds is noise in a normal log.
     // The two clock reads per tick cost nothing and are always taken.
-    let profile_every = env_parse::<u64>("POCKETJS_PROFILE_SECS")?
+    // Every other knob is reachable from the command line, and on a takeover
+    // boot the environment belongs to rcS: changing it means a reboot, while a
+    // flag is a restart. Asking where the time goes should not cost more than
+    // asking for a different waveform.
+    let profile_every = Some(args.profile_secs)
         .filter(|secs| *secs > 0)
         .map(Duration::from_secs);
     let mut profile_window = Instant::now();

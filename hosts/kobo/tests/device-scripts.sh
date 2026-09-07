@@ -55,6 +55,17 @@ cat >"$WORK/bin/usleep" <<'STUB'
 #!/bin/sh
 exit 0
 STUB
+# The launcher flushes the card so a freeze leaves a log; the suite must not
+# flush the machine it runs on.
+cat >"$WORK/bin/sync" <<'STUB'
+#!/bin/sh
+echo flush >>"$SYNC_LOG"
+STUB
+chmod +x "$WORK/bin/sync"
+SYNC_LOG="$WORK/syncs"
+: >"$SYNC_LOG"
+POCKETJS_SYNC_SECS=1
+export POCKETJS_SYNC_SECS SYNC_LOG
 cat >"$NICKEL_ROOT/usr/local/Kobo/nickel" <<'STUB'
 #!/bin/sh
 echo running >"$NICKEL_STATE"
@@ -223,6 +234,10 @@ rm -f "$POCKETJS_BOOT_LOG"
 POCKETJS_STDOUT=/dev/pts/3 launch >/dev/null 2>&1
 check "a session on a pty is left to print" "0" \
     "$([ -f "$POCKETJS_BOOT_LOG" ] && echo 1 || echo 0)"
+# POSIX keeps a `VAR=x func` assignment after the function returns, unlike a
+# `VAR=x command` one. Leaving it set makes every later launch think a person
+# is watching, and every later boot-log check silently vacuous.
+unset POCKETJS_STDOUT
 
 mv "$WORK/pak.hidden" "$APP/app.pak"
 
@@ -295,6 +310,14 @@ echo running >"$NICKEL_STATE"
 launch >/dev/null
 # The bundle arguments are always the launcher's; RESTART.args replaces only
 # what the caller passed after them.
+contains "the flusher is started" "flushing logs every" "$WORK/boot.log"
+# It flushes the card so a freeze leaves a log, and it must stop when the
+# session does: an orphan would keep syncing for as long as the device is up.
+flushes_before=$(wc -l <"$SYNC_LOG")
+sleep 2.5
+check "the flusher does not outlive the session" "$flushes_before" \
+    "$(wc -l <"$SYNC_LOG")"
+
 check "the restart takes the new options" "ok" \
     "$(grep -q -- '--pak .* --motion-waveform A2$' "$RUN_ARGS" &&
         echo ok || cat "$RUN_ARGS")"
