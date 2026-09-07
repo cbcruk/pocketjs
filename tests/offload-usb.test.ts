@@ -94,11 +94,24 @@ test("USB mailbox preserves identities, bounds records and binary payloads, and 
     await reply(2, 11);
     await Bun.sleep(240);
     expect(read("res2")!.readUInt32LE(12)).toBe(11);
-    writeFileSync(join(provider.root,"req3"),usbPacket(provider.epoch,12,20,0,0,0,0,Buffer.from("null")));
-    await Bun.sleep(30);expect(read("res3")).toBeUndefined();
+    writeFileSync(
+      join(provider.root, "req3"),
+      usbPacket(provider.epoch, 12, 20, 0, 0, 0, 0, Buffer.from("null")),
+    );
+    await Bun.sleep(30);
+    expect(read("res3")).toBeUndefined();
     const epoch = provider.epoch;
     send(1, 3, "test.crash", "");
-    await until(() => provider.epoch !== epoch && read("ready"));
+    await until(() => {
+      const ready = read("ready");
+      // until() treats only undefined as pending. A boolean false here
+      // would send the recovery request before the crashed worker exits.
+      return provider.epoch !== epoch &&
+        ready?.readUInt32LE(4) === provider.epoch
+        ? ready
+        : undefined;
+    });
+    expect(provider.epoch).not.toBe(epoch);
     send(0, 4, "test.echo", "recovered");
     b = await reply(0, 4);
     expect(b.readUInt32LE(4)).toBe(provider.epoch);
