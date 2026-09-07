@@ -263,6 +263,43 @@ echo running >"$NICKEL_STATE"
 check "a hardware event does not block the session" "0" "$(launch_before)"
 check "the UI is restored after draining" "running" "$(await_nickel)"
 
+echo "-- restart without a reboot --"
+# Booted from rcS, killing the host runs the exit trap and the Kobo UI comes
+# back, so trying a different waveform used to cost a reboot.
+RUN_COUNT="$WORK/runs"
+RUN_ARGS="$WORK/run.args"
+export RUN_COUNT RUN_ARGS
+cat >"$APP/pocketjs-kobo" <<'STUB'
+#!/bin/sh
+runs=$(cat "$RUN_COUNT" 2>/dev/null || echo 0)
+runs=$((runs + 1))
+echo "$runs" >"$RUN_COUNT"
+echo "$*" >"$RUN_ARGS"
+[ "$runs" = 1 ] && touch "$POCKETJS_DIR/RESTART"
+exit 0
+STUB
+chmod +x "$APP/pocketjs-kobo"
+
+: >"$RUN_COUNT"
+echo running >"$NICKEL_STATE"
+check "a restart request is not a failure" "0" "$(launch)"
+check "the host ran again" "2" "$(cat "$RUN_COUNT")"
+check "the request is consumed" "0" \
+    "$([ -e "$APP/RESTART" ] && echo 1 || echo 0)"
+check "the UI comes back only at the end" "running" "$(await_nickel)"
+
+# The point of restarting is trying something different.
+: >"$RUN_COUNT"
+echo "--motion-waveform A2" >"$APP/RESTART.args"
+echo running >"$NICKEL_STATE"
+launch >/dev/null
+# The bundle arguments are always the launcher's; RESTART.args replaces only
+# what the caller passed after them.
+check "the restart takes the new options" "ok" \
+    "$(grep -q -- '--pak .* --motion-waveform A2$' "$RUN_ARGS" &&
+        echo ok || cat "$RUN_ARGS")"
+rm -f "$APP/RESTART.args"
+
 echo
 if [ "$FAILURES" -eq 0 ]; then
     echo "device scripts: all checks passed"

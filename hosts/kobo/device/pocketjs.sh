@@ -183,7 +183,32 @@ echo "pocketjs: logging $POCKETJS_LOG"
 
 POCKETJS_GUI_PAUSED=1
 export POCKETJS_GUI_PAUSED
-"$POCKETJS_BIN" \
-    --js "$POCKETJS_JS" \
-    --pak "$POCKETJS_PAK" \
-    "$@" >>"$POCKETJS_LOG" 2>&1
+
+# Booted from rcS this launcher owns the screen for the life of the device, so
+# every host change used to cost a reboot: killing the host runs the exit trap,
+# and the exit trap correctly brings the Kobo UI back. Leave a RESTART file and
+# the host comes back instead — which is what trying a waveform looks like.
+#
+#   kobo-push.py <ip> <dir> pocketjs-kobo
+#   kobo-sh.py <ip> "touch <dir>/RESTART; killall pocketjs-kobo"
+while :; do
+    "$POCKETJS_BIN" \
+        --js "$POCKETJS_JS" \
+        --pak "$POCKETJS_PAK" \
+        "$@" >>"$POCKETJS_LOG" 2>&1
+    status=$?
+    [ -e "$POCKETJS_DIR/RESTART" ] || break
+    # Consume it first: a restart that then fails must not loop forever.
+    rm -f "$POCKETJS_DIR/RESTART"
+    read_args=$(cat "$POCKETJS_DIR/RESTART.args" 2>/dev/null) || read_args=""
+    if [ -n "$read_args" ]; then
+        echo "pocketjs: restarting with $read_args"
+        # Deliberate word splitting: the file holds a command line.
+        # shellcheck disable=SC2086
+        set -- $read_args
+    else
+        echo "pocketjs: restarting"
+    fi
+    [ -f "$POCKETJS_LOG" ] && mv -f "$POCKETJS_LOG" "$POCKETJS_LOG.1"
+done
+exit "$status"
