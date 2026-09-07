@@ -426,6 +426,7 @@ export function installFrameHandler(
     hits?: readonly number[],
     touchSurfaces?: readonly number[],
     rightAnalog?: number,
+    inputElapsedUs?: number,
   ) => void,
 ): void {
   (
@@ -437,6 +438,7 @@ export function installFrameHandler(
         hits?: readonly number[],
         touchSurfaces?: readonly number[],
         rightAnalog?: number,
+        inputElapsedUs?: number,
       ) => void;
     }
   ).frame = fn;

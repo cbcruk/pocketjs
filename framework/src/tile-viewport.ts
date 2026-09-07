@@ -57,7 +57,7 @@ export function createTileCamera(options: TileCameraOptions) {
       vx = vy = 0; tween = undefined; dragging = false; constrain();
     },
     /** Screen-space controller velocity (pixels/second); positive moves map.
-     * Caller supplies elapsed simulation time, independent of network latency. */
+     * Caller supplies bounded elapsed time (inputDeltaSeconds for live input). */
     step(seconds: number, inputX = 0, inputY = 0) {
       finite(seconds, inputX, inputY); if (seconds <= 0 || seconds > 1 / 15 + 1e-8) throw new Error("Tile camera step exceeds budget");
       if (tween) {

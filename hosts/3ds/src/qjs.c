@@ -819,19 +819,21 @@ bool qjs_frame(
   const uint32_t *touches,
   const int32_t *hits,
   size_t touch_count,
-  int32_t right_analog
+  int32_t right_analog,
+  uint32_t input_elapsed_us
 ) {
   if (context == NULL) return false;
   offload_frame();
   coverage_used = false;
   image_used = false;
-  JSValue arguments[6] = {
+  JSValue arguments[7] = {
     JS_NewInt32(context, buttons),
     JS_NewInt32(context, analog),
     JS_NewArray(context),
     JS_NewArray(context),
     JS_NewArray(context),
     JS_NewInt32(context, right_analog),
+    JS_NewUint32(context, input_elapsed_us),
   };
   for (size_t index = 0; index < touch_count && index < 8; index += 1) {
     JS_SetPropertyUint32(
@@ -849,8 +851,8 @@ bool qjs_frame(
     /* 1 = auxiliary output; the 3DS touch panel is the bottom screen. */
     JS_SetPropertyUint32(context, arguments[4], (uint32_t)index, JS_NewInt32(context, 1));
   }
-  JSValue result = JS_Call(context, frame_function, global, 6, arguments);
-  for (size_t index = 0; index < 6; index += 1) JS_FreeValue(context, arguments[index]);
+  JSValue result = JS_Call(context, frame_function, global, 7, arguments);
+  for (size_t index = 0; index < 7; index += 1) JS_FreeValue(context, arguments[index]);
   if (JS_IsException(result)) {
     take_exception();
     JS_FreeValue(context, result);
