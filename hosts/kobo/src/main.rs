@@ -19,7 +19,7 @@ use input::{ContactReport, Input, PowerKey};
 use pocket_mod::Guest;
 use pocket_ui_surface::UiSurface;
 use pocketjs_core::spec;
-use refresh::{Epdc, RefreshPolicy, Waveform};
+use refresh::{Epdc, RefreshKind, RefreshPolicy, Waveform};
 use signal_hook::consts::signal::{SIGHUP, SIGINT, SIGTERM};
 
 const HOST_ID: &str = "kobo-glo";
@@ -62,6 +62,7 @@ struct Args {
     present_hz: u32,
     motion_waveform: Waveform,
     ghost_budget: u32,
+    ghost_area_panels: usize,
     rotation: Option<Rotation>,
     sim_hz: u32,
     power_helper: Option<PathBuf>,
@@ -82,6 +83,7 @@ impl Args {
                 &std::env::var("POCKETJS_MOTION_WAVEFORM").unwrap_or_else(|_| "DU".into()),
             )?,
             ghost_budget: env_parse("POCKETJS_GHOST_BUDGET")?.unwrap_or(80),
+            ghost_area_panels: env_parse("POCKETJS_GHOST_AREA")?.unwrap_or(6),
             rotation: Rotation::parse(
                 &std::env::var("POCKETJS_ROTATION").unwrap_or_else(|_| "auto".into()),
             )?,
@@ -126,6 +128,11 @@ impl Args {
                     args.ghost_budget = value(&mut index)?
                         .parse()
                         .context("--ghost-budget must be an integer")?
+                }
+                "--ghost-area" => {
+                    args.ghost_area_panels = value(&mut index)?
+                        .parse()
+                        .context("--ghost-area must be an integer")?
                 }
                 "--rotation" => args.rotation = Rotation::parse(value(&mut index)?)?,
                 "--sim-hz" => args.sim_hz = parse_sim_hz(value(&mut index)?)?,
@@ -185,6 +192,10 @@ Options:
   --present-hz N           physical refresh cap, 1..60 (default 30)
   --motion-waveform DU|A2  fast shallow-refresh waveform (default DU)
   --ghost-budget N         fast updates before a full GC16 cleanup
+  --ghost-area N           full panels of fast-updated area before that
+                           cleanup (default 6). Whichever limit is reached
+                           first wins, and for a large damage rect it is
+                           this one, not --ghost-budget
   --rotation auto|0|90|180|270
   --sim-hz N               virtual frames per second, must divide 60 (default 30)
   --power-helper PATH      script run as `PATH suspend` on a short power press
@@ -351,6 +362,36 @@ struct Profile {
     guest: Duration,
     raster: Duration,
     present: Duration,
+    /// Panel updates by kind. Which waveform an update actually used is the
+    /// one thing a waveform experiment needs and the one thing the framebuffer
+    /// cannot show: a probe whose content changes slower than MOTION_WINDOW
+    /// takes the static path, and three runs of --motion-waveform then differ
+    /// in nothing. Found that way.
+    kinds: RefreshCounts,
+}
+
+#[derive(Default, Clone, Copy)]
+struct RefreshCounts {
+    initial: u32,
+    motion: u32,
+    static_: u32,
+    quiet_cleanup: u32,
+    ghost_cleanup: u32,
+    forced: u32,
+}
+
+impl RefreshCounts {
+    fn record(&mut self, kind: RefreshKind) {
+        let slot = match kind {
+            RefreshKind::Initial => &mut self.initial,
+            RefreshKind::Motion => &mut self.motion,
+            RefreshKind::Static => &mut self.static_,
+            RefreshKind::QuietCleanup => &mut self.quiet_cleanup,
+            RefreshKind::GhostCleanup => &mut self.ghost_cleanup,
+            RefreshKind::Forced => &mut self.forced,
+        };
+        *slot += 1;
+    }
 }
 
 impl Profile {
@@ -373,6 +414,15 @@ impl Profile {
             share(self.raster),
             per_tick(self.raster),
             share(self.present),
+        );
+        let report = format!(
+            "{report}; updates motion {} static {} quiet {} ghost {} forced {} initial {}",
+            self.kinds.motion,
+            self.kinds.static_,
+            self.kinds.quiet_cleanup,
+            self.kinds.ghost_cleanup,
+            self.kinds.forced,
+            self.kinds.initial,
         );
         *self = Self::default();
         report
@@ -436,9 +486,10 @@ impl AppRuntime {
                 "ink-policy",
                 &format!(
                     "globalThis.__inkPolicy = {{ motionWaveform: {:?}, \
-                     ghostBudget: {}, presentHz: {} }};",
+                     ghostBudget: {}, ghostAreaPanels: {}, presentHz: {} }};",
                     args.motion_waveform.name(),
                     args.ghost_budget,
+                    args.ghost_area_panels,
                     args.present_hz
                 ),
             )
@@ -602,6 +653,7 @@ fn main() -> Result<()> {
         args.present_hz,
         args.motion_waveform,
         args.ghost_budget,
+        args.ghost_area_panels,
     )?;
     let mut runtime = AppRuntime::load(&args, &geometry)?;
 
@@ -759,9 +811,11 @@ fn main() -> Result<()> {
                     runtime.damage.latch();
                     pending.clear();
                     force_refresh = false;
+                    runtime.profile.kinds.record(request.kind);
                     fbink.submit(request)?;
                 }
             } else if let Some(request) = refresh.on_idle(elapsed) {
+                runtime.profile.kinds.record(request.kind);
                 fbink.submit(request)?;
             }
         }

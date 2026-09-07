@@ -89,7 +89,13 @@ pub struct RefreshPolicy {
     panel: Rect,
     motion_waveform: Waveform,
     min_present_interval: Duration,
+    /// Fast updates allowed before a full cleanup.
     ghost_update_limit: u32,
+    /// Fast-updated pixels allowed before a full cleanup. Whichever limit is
+    /// reached first wins, and for anything but a tiny damage rect that is
+    /// this one: a probe repainting a third of the panel exhausts six panels
+    /// of area in about twelve updates, so a `--ghost-budget` of 80 produced
+    /// a cleanup every 1.25s and never once ran out of updates.
     ghost_area_limit: usize,
     started: bool,
     last_damage: Option<Duration>,
@@ -107,6 +113,7 @@ impl RefreshPolicy {
         present_hz: u32,
         motion_waveform: Waveform,
         ghost_update_limit: u32,
+        ghost_area_panels: usize,
     ) -> Result<Self> {
         if present_hz == 0 || present_hz > 60 {
             bail!("present rate must be in 1..=60 Hz");
@@ -122,7 +129,7 @@ impl RefreshPolicy {
             motion_waveform,
             min_present_interval: Duration::from_nanos(1_000_000_000 / present_hz as u64),
             ghost_update_limit: ghost_update_limit.max(1),
-            ghost_area_limit: panel_width * panel_height * 6,
+            ghost_area_limit: panel_width * panel_height * ghost_area_panels.max(1),
             started: false,
             last_damage: None,
             last_present: None,
@@ -446,7 +453,7 @@ mod tests {
 
     #[test]
     fn first_update_is_conservative_auto() {
-        let mut policy = RefreshPolicy::new(100, 200, 30, Waveform::Du, 8).unwrap();
+        let mut policy = RefreshPolicy::new(100, 200, 30, Waveform::Du, 8, 6).unwrap();
         let request = policy
             .on_damage(Duration::ZERO, &[rect(1, 2, 3, 4)], false)
             .unwrap();
@@ -457,7 +464,7 @@ mod tests {
 
     #[test]
     fn motion_is_throttled_then_gets_quiet_cleanup() {
-        let mut policy = RefreshPolicy::new(100, 200, 30, Waveform::A2, 8).unwrap();
+        let mut policy = RefreshPolicy::new(100, 200, 30, Waveform::A2, 8, 6).unwrap();
         policy.on_damage(Duration::ZERO, &[rect(0, 0, 5, 5)], false);
         assert!(
             policy
@@ -480,7 +487,7 @@ mod tests {
 
     #[test]
     fn ghost_budget_forces_full_flash() {
-        let mut policy = RefreshPolicy::new(100, 200, 60, Waveform::Du, 1).unwrap();
+        let mut policy = RefreshPolicy::new(100, 200, 60, Waveform::Du, 1, 6).unwrap();
         policy.on_damage(Duration::ZERO, &[rect(0, 0, 5, 5)], false);
         let fast = policy
             .on_damage(Duration::from_millis(20), &[rect(0, 0, 5, 5)], false)
@@ -495,9 +502,44 @@ mod tests {
         assert!(full.flash);
     }
 
+    /// The count is not the limit that fires in practice. A screen repainting
+    /// a large rect exhausts the area budget in a handful of updates, so a
+    /// generous `--ghost-budget` buys nothing on its own — measured on a Glo
+    /// as a full-screen cleanup every 1.25s while `--ghost-budget 80` had
+    /// never once run out of updates.
+    #[test]
+    fn area_reaches_the_cleanup_before_the_count_does() {
+        // Two panels of area against a rect that is half a panel. The limit is
+        // read before the update is counted, so the fourth is the last one
+        // through and the fifth is the cleanup.
+        let mut policy = RefreshPolicy::new(100, 200, 60, Waveform::Du, 1000, 2).unwrap();
+        let half = rect(0, 0, 100, 100);
+        policy.on_damage(Duration::ZERO, &[half], false);
+        for tick in 1..=4 {
+            let request = policy
+                .on_damage(Duration::from_millis(tick * 20), &[half], false)
+                .unwrap();
+            assert_eq!(request.kind, RefreshKind::Motion, "update {tick}");
+        }
+        let full = policy
+            .on_damage(Duration::from_millis(100), &[half], false)
+            .unwrap();
+        assert_eq!(full.kind, RefreshKind::GhostCleanup);
+
+        // The same run with room for the area never reaches a cleanup.
+        let mut roomy = RefreshPolicy::new(100, 200, 60, Waveform::Du, 1000, 64).unwrap();
+        roomy.on_damage(Duration::ZERO, &[half], false);
+        for tick in 1..=8 {
+            let request = roomy
+                .on_damage(Duration::from_millis(tick * 20), &[half], false)
+                .unwrap();
+            assert_eq!(request.kind, RefreshKind::Motion, "roomy update {tick}");
+        }
+    }
+
     #[test]
     fn explicit_reload_forces_full_cleanup() {
-        let mut policy = RefreshPolicy::new(100, 200, 30, Waveform::Du, 8).unwrap();
+        let mut policy = RefreshPolicy::new(100, 200, 30, Waveform::Du, 8, 6).unwrap();
         let full = policy
             .on_damage(Duration::ZERO, &[rect(1, 2, 3, 4)], true)
             .unwrap();
