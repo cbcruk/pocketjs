@@ -182,3 +182,32 @@ libctru, GPU upload cost or device presentation cadence.
 Reusable reads can use the [shared resource scheduler](RESOURCES.md#shared-read-scheduling)
 for admission, priority, caching and bounded materialization. Commands retain
 the direct offload path and application-owned recovery semantics.
+
+## Prepared geometry response extension
+
+An opted-in request uses `response: "mesh"`. The length prefix retains the
+binary high bit; the payload starts with `PMSH` and a little-endian u32 request
+ID, followed by a standalone `PMH1` entry. `encodeOffloadMesh` validates the
+entry before it enters the socket queue. Image requests retain `PIMG` and their
+existing binary representation.
+
+**A mesh entry is at most 36,880 bytes: 4,096 vertices and 2,048 triangles.**
+Its 16-byte header contains `PMH1`, u16 width, height, vertex count, triangle
+count and a zero u32 reserved field. Vertices are u16 x/y in sixteenths of a
+logical pixel. Each triangle contains three u16 indices and a u32 ABGR color.
+All coordinates fit the declared width/height, and each index references a
+vertex in the same entry. Integers inside the binary payload are little-endian.
+
+**Mesh reception uses the existing eight image staging slots.** The worker
+validates size, indices and coordinates before publishing a ticket. The guest
+receives only `{token, width, height, bytes}`. `uploadMesh` shares the one-per-frame
+materialization credit with `uploadImage`; `releaseMesh` returns staging.
+`createOffloadMeshCollection` owns both response cleanup and resident handle
+disposal. Late, cancelled, wrong-kind and failed-consumer responses return their
+tickets. Mesh resources never consume texture handles.
+
+The native core owns generation-tagged geometry and emits the existing TRI
+commands after bounded transformation and clipping. PBF parsing, topology,
+style selection and triangulation remain provider responsibilities. See
+[prepared geometry resources](RESOURCES.md#prepared-2d-geometry) for rendering
+and cache ownership.

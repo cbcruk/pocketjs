@@ -32,8 +32,10 @@ int main(void) {
     } else if (length && phase==2) {
       unsigned id,token,w,h,bytes;
       assert(sscanf(record,"{\"id\":%u,\"mesh\":{\"token\":%u,\"width\":%u,\"height\":%u,\"bytes\":%u}}",&id,&token,&w,&h,&bytes)==5);
-      assert(id==2 && w==256 && h==256 && bytes==16); unsigned n;
-      const uint8_t *mesh=offload_mesh(token,&n); assert(mesh && n==16 && !memcmp(mesh,"PMH1",4));
+      assert(id==2 && w==256 && h==256 && bytes==36880); unsigned n;
+      const uint8_t *mesh=offload_mesh(token,&n); assert(mesh && n==36880 && !memcmp(mesh,"PMH1",4));
+      for(unsigned i=0;i<4096;i++){assert((mesh[16+i*4] | (unsigned)mesh[17+i*4]<<8)==i);assert((mesh[18+i*4] | (unsigned)mesh[19+i*4]<<8)==4096-i);}
+      for(unsigned i=0;i<2048;i++){unsigned at=16+4096*4+i*10;for(unsigned j=0;j<3;j++)assert((mesh[at+j*2] | (unsigned)mesh[at+j*2+1]<<8)==i+j);assert(mesh[at+6]==0x56 && mesh[at+9]==0xff);}
       assert(!offload_image(token,&w,&h)); offload_release_image(token); assert(!offload_mesh(token,&n));
       offload_reset(); assert(offload_session() == 0); phase = 3;
     } else if (length && phase == 4) { assert(strstr(record, "network-ok")); phase = 5; }

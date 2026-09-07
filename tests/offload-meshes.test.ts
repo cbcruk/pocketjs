@@ -126,3 +126,11 @@ test("mesh collection owns staging through failed materialization and withdrawn 
     dispose();
     client.dispose();
   }));
+
+test("throwing response callbacks cannot strand native mesh staging", () => {
+  const replies: string[] = [], released: number[] = [];
+  const client = createOffloadClient({ session: () => 1, submit: () => true, take: () => replies.shift(), uploadMesh: () => 1, releaseMesh: token => released.push(token) });
+  const id = client.requestMesh("mesh", "{}", () => { throw new Error("consumer failed"); });
+  client.step(); replies.push(JSON.stringify({ id, mesh: { token: 8, width: 256, height: 256, bytes: 16 } })); client.step();
+  expect(released).toEqual([8]); expect(client.pending()).toBe(0);
+});
