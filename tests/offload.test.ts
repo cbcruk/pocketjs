@@ -18,13 +18,16 @@ describe("offload budgets and failure delivery", () => {
     const scratch = mkdtempSync(join(tmpdir(), "pocket-offload-"));
     try {
       const binary = join(scratch, "queue");
-      const compile = Bun.spawnSync(["cc", "-std=c11", "-O2", "-pthread", "-fsanitize=address,undefined", resolve(import.meta.dir, "fixtures/offload-queue.c"), "-o", binary]);
-      if (compile.exitCode) throw new Error(compile.stderr.toString());
-      const run = Bun.spawnSync([binary]);
-      if (run.exitCode) throw new Error(run.stderr.toString());
+      // Sanitizer compilation can exceed the runner's default five-second
+      // test budget. Bound compilation separately; keep the executable's
+      // run limit at five seconds and reject interrupted compiler output.
+      const compile = Bun.spawnSync(["cc", "-std=c11", "-O2", "-pthread", "-fsanitize=address,undefined", resolve(import.meta.dir, "fixtures/offload-queue.c"), "-o", binary], { timeout: 20_000, killSignal: "SIGKILL" });
+      if (compile.exitCode !== 0) throw new Error(`Compiler exited ${compile.exitCode} (${compile.signalCode}): ${compile.stderr.toString()}`);
+      const run = Bun.spawnSync([binary], { timeout: 5_000, killSignal: "SIGKILL" });
+      if (run.exitCode !== 0) throw new Error(`Native test exited ${run.exitCode} (${run.signalCode}): ${run.stderr.toString()}`);
       expect(run.stdout.toString()).toContain("100000 SPSC records verified");
     } finally { rmSync(scratch, { recursive: true }); }
-  });
+  }, 30_000);
   test("limits tickets, submissions and deliveries independently", () => {
     const r = rig(); let delivered = 0;
     for (let i = 0; i < 8; i++) expect(r.client.request("db.page", "{}", () => delivered++)).toBeGreaterThan(0);
