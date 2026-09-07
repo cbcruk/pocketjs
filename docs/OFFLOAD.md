@@ -206,8 +206,10 @@ materialization credit with `uploadImage`; `releaseMesh` returns staging.
 disposal. Late, cancelled, wrong-kind and failed-consumer responses return their
 tickets. Mesh resources never consume texture handles.
 
-The native core owns generation-tagged geometry and emits the existing TRI
-commands after bounded transformation and clipping. PBF parsing, topology,
+The native core owns generation-tagged geometry. On 3DS, materialization also
+uploads an immutable GPU vertex buffer; opaque Views submit its handle,
+transform and clip rectangle each frame. Other backends receive TRI commands
+after bounded CPU transformation and clipping. PBF parsing, topology,
 style selection and triangulation remain provider responsibilities. See
 [prepared geometry resources](RESOURCES.md#prepared-2d-geometry) for rendering
 and cache ownership.

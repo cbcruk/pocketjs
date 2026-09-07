@@ -424,9 +424,14 @@ residency. A collection frees its mesh handles on eviction and cleanup; old
 handles cannot draw a newly allocated mesh. Hosts without mesh operations cannot
 request this response extension.
 
-The core applies the View transform, clips triangles with fixed stack scratch,
-and emits the existing TRI drawing commands. The 3DS GPU rasterizes those
-commands; Wasm and other existing TRI backends retain the same pixel contract.
-This implementation still transforms geometry on the native CPU each frame;
-it does not retain device vertex buffers across frames. Bound both visible mesh
-count and provider detail when choosing an application frame budget.
+**The 3DS backend uploads one immutable vertex buffer during materialization.**
+Opaque mesh Views emit a ten-word command containing a handle, affine transform
+and clip rectangle. PICA transforms, clips and rasterizes the resident vertices;
+pan and zoom do not rebuild triangles on the CPU. The backend caps these buffers
+at 8 MiB, including replacements awaiting the preceding GPU frame's fence.
+Eviction releases the buffer after that fence. Upload failure follows the
+resource error and retry path, rather than allocating during drawing.
+
+Other backends use native CPU transformation and bounded clipping into existing
+TRI commands. A translucent mesh View also uses this path on 3DS. Bound visible
+mesh count and provider detail when choosing an application frame budget.

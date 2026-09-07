@@ -256,6 +256,7 @@ pub struct Ui {
     /// LIFO free list of texture slots (freed most recently, reused first).
     tex_free: Vec<u32>,
     meshes: mesh::Meshes,
+    mesh_commands: bool,
     /// Baked rounded-corner disc sprites (see draw::DiscCache).
     discs: draw::DiscCache,
     /// Raster pixels baked for each logical UI pixel. Layout and DrawList
@@ -344,6 +345,7 @@ impl Ui {
             textures: Vec::new(),
             tex_free: Vec::new(),
             meshes: mesh::Meshes::new(),
+            mesh_commands: false,
             discs: draw::DiscCache::new(),
             raster_density,
             raster_revision: 1,
@@ -813,6 +815,10 @@ impl Ui {
     }
 
     /// Validate a bounded prepared geometry entry and own its native storage.
+    /// Opt into retained geometry commands only when the backend implements them.
+    pub fn set_mesh_commands(&mut self, enabled: bool) { self.mesh_commands = enabled; self.bump_raster_revision(); }
+    pub fn mesh(&self, handle: i32) -> Option<&mesh::Mesh> { self.meshes.get(handle) }
+
     pub fn upload_mesh(&mut self, bytes: &[u8]) -> i32 {
         let handle = self.meshes.upload(bytes);
         if handle >= 0 { self.bump_raster_revision(); }
@@ -1491,6 +1497,7 @@ impl Ui {
             &self.styles,
             &self.fonts,
             &self.meshes,
+            self.mesh_commands,
             self.frame,
             self.layout.viewport,
             &mut self.textures,
@@ -1518,6 +1525,7 @@ impl Ui {
                 &self.styles,
                 &self.fonts,
                 &self.meshes,
+            self.mesh_commands,
                 self.frame,
                 self.layout.viewport,
                 &mut self.textures,
@@ -1565,6 +1573,7 @@ impl Ui {
             &self.styles,
             &self.fonts,
             &self.meshes,
+            self.mesh_commands,
             self.frame,
             auxiliary.root,
             auxiliary.layout.viewport,
@@ -1592,6 +1601,7 @@ impl Ui {
                 &self.styles,
                 &self.fonts,
                 &self.meshes,
+            self.mesh_commands,
                 self.frame,
                 auxiliary.root,
                 auxiliary.layout.viewport,

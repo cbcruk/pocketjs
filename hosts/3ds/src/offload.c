@@ -27,11 +27,23 @@ static _Atomic bool reset_requested;
 static Thread worker;
 static unsigned sends, takes;
 static _Atomic unsigned measured_frames, max_us, over_budget;
+static _Atomic unsigned ui_us, prepare_us, submit_us;
+static void measure_max(_Atomic unsigned *counter, unsigned value) {
+  unsigned previous = atomic_load_explicit(counter, memory_order_relaxed);
+  while (value > previous && !atomic_compare_exchange_weak_explicit(counter,
+      &previous, value, memory_order_relaxed, memory_order_relaxed)) {}
+}
 void offload_measure(unsigned us) {
   atomic_fetch_add_explicit(&measured_frames, 1, memory_order_relaxed);
   if (us > 16667) atomic_fetch_add_explicit(&over_budget, 1, memory_order_relaxed);
   unsigned previous = atomic_load_explicit(&max_us, memory_order_relaxed);
   if (us > previous) atomic_store_explicit(&max_us, us, memory_order_relaxed);
+}
+void offload_measure_parts(unsigned ui, unsigned prepare, unsigned submit) {
+  measure_max(&ui_us, ui);
+  measure_max(&prepare_us, prepare);
+  measure_max(&submit_us, submit);
+  offload_measure(ui + prepare + submit);
 }
 static OffloadRecord ui_record;
 
@@ -127,8 +139,9 @@ static void serve(void *unused) {
         metrics_at = osGetTime();
         char metrics[256];
         int size = snprintf(metrics, sizeof metrics,
-          "{\"v\":1,\"id\":0,\"method\":\"offload.metrics\",\"payload\":\"frames=%u maxCpuUs=%u over16ms=%u\"}",
-          atomic_load(&measured_frames), atomic_load(&max_us), atomic_load(&over_budget));
+          "{\"v\":1,\"id\":0,\"method\":\"offload.metrics\",\"payload\":\"frames=%u maxCpuUs=%u over16ms=%u uiUs=%u prepareUs=%u submitUs=%u\"}",
+          atomic_load(&measured_frames), atomic_load(&max_us), atomic_load(&over_budget),
+          atomic_exchange(&ui_us, 0), atomic_exchange(&prepare_us, 0), atomic_exchange(&submit_us, 0));
         uint32_t length = htonl((uint32_t)size);
         alive = transfer(fd, (char *)&length, 4, true) && transfer(fd, metrics, size, true);
         if (!alive) break;

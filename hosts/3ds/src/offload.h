@@ -7,6 +7,7 @@ bool offload_start(void);
 void offload_stop(void);
 void offload_frame(void);
 void offload_measure(unsigned microseconds);
+void offload_measure_parts(unsigned ui, unsigned prepare, unsigned submit);
 int offload_session(void);
 bool offload_submit(const char *bytes, size_t length);
 size_t offload_take(char *out);

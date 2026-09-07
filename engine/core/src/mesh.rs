@@ -4,6 +4,7 @@ pub const MAX_VERTICES: usize = 4096;
 pub const MAX_TRIANGLES: usize = 2048;
 pub const MAX_BYTES: usize = 16 + MAX_VERTICES * 4 + MAX_TRIANGLES * 10;
 #[derive(Clone, Copy)]
+#[repr(C)]
 pub struct Triangle {
     pub indices: [u16; 3],
     pub color: u32,

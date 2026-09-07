@@ -953,6 +953,7 @@ int main(void) {
 #endif
     }
     gfx_finish_frame();
+    u64 offload_prepared_at = svcGetSystemTick();
 
     C3D_RenderTargetClear(primary_target, C3D_CLEAR_ALL, 0x000000ff, 0);
     C3D_FrameDrawOn(primary_target);
@@ -965,7 +966,10 @@ int main(void) {
     C3D_SetViewport(0, 0, AUX_VIEW_H, AUX_VIEW_W);
     gfx_draw_surface(1);
     C3D_FrameEnd(0);
-    offload_measure((unsigned)((offload_ui_ticks + svcGetSystemTick() - offload_cpu_start) * 1000000 / SYSCLOCK_ARM11));
+    offload_measure_parts(
+      (unsigned)(offload_ui_ticks * 1000000 / SYSCLOCK_ARM11),
+      (unsigned)((offload_prepared_at - offload_cpu_start) * 1000000 / SYSCLOCK_ARM11),
+      (unsigned)((svcGetSystemTick() - offload_prepared_at) * 1000000 / SYSCLOCK_ARM11));
 #if !defined(POCKETJS_CAPTURE) && !defined(POCKETJS_OFFLOAD)
     guest.submitted_frames += 1;
     devserver_set_frame_stats(

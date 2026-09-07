@@ -73,8 +73,9 @@ export function createOffloadMeshCollection<I>(
     payload(input: I): string;
   },
 ) {
-  // Fixed staging plus old/new native meshes (including aligned triangle records).
-  const cost = 131088 + 2 * (4096 * 4 + 2048 * 12 + 512);
+  // Staging plus old/new native records and 3DS retained VBOs. Replaced VBOs
+  // remain alive until the previous GPU frame retires.
+  const cost = 131088 + 2 * (4096 * 4 + 2048 * 12 + 2048 * 3 * 32 + 512);
   return runtime.createCollection<I, string, MeshResource>({
     ...options,
     maxResponseBytes: 512,

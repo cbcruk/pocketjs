@@ -850,6 +850,7 @@ struct Walker<'a> {
     styles: &'a StyleTable,
     fonts: &'a Fonts,
     meshes: &'a crate::mesh::Meshes,
+    mesh_commands: bool,
     /// Global vblank counter — drives deterministic sprite frame selection.
     frame: u64,
     /// Viewport bounds in px — every emitted coordinate is clipped to
@@ -888,7 +889,7 @@ pub fn build(
     styles: &StyleTable,
     fonts: &Fonts,
     meshes: &crate::mesh::Meshes,
-    frame: u64,
+    mesh_commands: bool,    frame: u64,
     screen: (f32, f32),
     textures: &mut Vec<crate::TexSlot>,
     tex_free: &mut Vec<u32>,
@@ -904,6 +905,7 @@ pub fn build(
         styles,
         fonts,
         meshes,
+        mesh_commands,
         frame,
         spec::ROOT_ID,
         screen,
@@ -926,7 +928,7 @@ pub fn build_root(
     styles: &StyleTable,
     fonts: &Fonts,
     meshes: &crate::mesh::Meshes,
-    frame: u64,
+    mesh_commands: bool,    frame: u64,
     root_id: i32,
     screen: (f32, f32),
     textures: &mut Vec<crate::TexSlot>,
@@ -952,6 +954,7 @@ pub fn build_root(
         styles,
         fonts,
         meshes,
+        mesh_commands,
         frame,
         screen,
         glyph_scratch: Vec::new(),
@@ -1169,7 +1172,19 @@ impl<'a> Walker<'a> {
 
         // -- image / animated sprite -------------------------------------------
         if let Some(mesh) = self.meshes.get(node.mesh) {
-            paint_mesh(dl, mesh, &world, l.w, l.h, &clip, self.screen, op);
+            let bounds = clip.intersect(&world_aabb_of(self.screen, &world, l.w, l.h));
+            if self.mesh_commands && op == 1.0 && bounds.x1 > bounds.x0 && bounds.y1 > bounds.y0 {
+                let sx = l.w / mesh.width as f32;
+                let sy = l.h / mesh.height as f32;
+                dl.words.extend_from_slice(&[
+                    spec::draw_op::MESH, node.mesh as u32,
+                    (world.a*sx).to_bits(), (world.b*sx).to_bits(), (world.c*sy).to_bits(), (world.d*sy).to_bits(),
+                    world.tx.to_bits(), world.ty.to_bits(),
+                    xy_word(roundf(clip.x0),roundf(clip.y0)), xy_word(roundf(clip.x1)-roundf(clip.x0),roundf(clip.y1)-roundf(clip.y0)),
+                ]);
+            } else if bounds.x1 > bounds.x0 && bounds.y1 > bounds.y0 {
+                paint_mesh(dl, mesh, &world, l.w, l.h, &clip, self.screen, op);
+            }
         }
         if node.node_type == spec::NodeType::Image as u8 && node.tex >= 0 {
             // Plain image samples the whole texture; a sprite samples the
@@ -2870,6 +2885,41 @@ fn paint_mesh(
 #[cfg(test)]
 mod mesh_tests {
     use super::*;
+    #[test]
+    fn retained_mesh_is_opt_in_bounded_and_falls_back_for_opacity() {
+        let mut bytes = alloc::vec![0u8; 16 + 12 + 10];
+        bytes[..4].copy_from_slice(b"PMH1");
+        for (offset, value) in [(4, 256u16), (6, 256), (8, 3), (10, 1), (20, 4096), (26, 4096), (30, 1), (32, 2)] {
+            bytes[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
+        }
+        bytes[34..38].copy_from_slice(&0xff112233u32.to_le_bytes());
+        let mut ui = crate::Ui::new();
+        let handle = ui.upload_mesh(&bytes);
+        assert!(handle >= 0);
+        let node = ui.create_node(spec::NodeType::View as u8);
+        ui.insert_before(spec::ROOT_ID, node, 0);
+        ui.set_prop(node, spec::prop::POS_TYPE, spec::PosType::Absolute as u32 as f64);
+        ui.set_prop(node, spec::prop::WIDTH, 512.0);
+        ui.set_prop(node, spec::prop::HEIGHT, 512.0);
+        ui.set_mesh(node, handle);
+        // Other backends receive only their established triangle contract.
+        assert_eq!(ui.draw().words[0], spec::draw_op::TRI);
+        ui.set_mesh_commands(true);
+        let words = &ui.draw().words;
+        assert_eq!(words.len(), 10);
+        assert_eq!(&words[..2], &[spec::draw_op::MESH, handle as u32]);
+        assert_eq!(f32::from_bits(words[2]), 2.0);
+        assert_eq!(f32::from_bits(words[5]), 2.0);
+        ui.set_prop(node, spec::prop::OPACITY, 0.5);
+        assert_eq!(ui.draw().words[0], spec::draw_op::TRI);
+        ui.set_prop(node, spec::prop::OPACITY, 1.0);
+        ui.set_prop(node, spec::prop::TRANSLATE_X, 2000.0);
+        assert!(ui.draw().words.is_empty());
+        ui.set_prop(node, spec::prop::TRANSLATE_X, 0.0);
+        ui.free_mesh(handle);
+        assert!(ui.mesh(handle).is_none());
+        assert!(ui.draw().words.is_empty());
+    }
     #[test]
     fn prepared_mesh_clips_without_changing_the_drawlist_contract() {
         let mesh = crate::mesh::Mesh {

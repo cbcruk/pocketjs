@@ -19,6 +19,7 @@
  */
 
 #include "qjs.h"
+#include "gfx.h"
 #include "offload.h"
 #include "offload_coverage.h"
 
@@ -500,7 +501,12 @@ static JSValue host_operation(
       if(image_used) return JS_NewInt32(ctx,-1);
       unsigned length; const uint8_t *bytes=offload_mesh((uint32_t)argument_int(ctx,argc,argv,0),&length);
       if(!bytes) return JS_NewInt32(ctx,-1); image_used=true;
-      return JS_NewInt32(ctx,ui_upload_mesh(bytes,length));
+      int32_t handle = ui_upload_mesh(bytes, length);
+      if (handle >= 0 && !gfx_upload_mesh(handle)) {
+        ui_free_mesh(handle);
+        handle = -1;
+      }
+      return JS_NewInt32(ctx, handle);
     }
     case HostOffloadImage: {
       if (image_used) return JS_NewInt32(ctx, -1);
