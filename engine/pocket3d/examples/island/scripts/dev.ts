@@ -73,37 +73,56 @@ try {
     mkdirSync(out, { recursive: true });
     const before = await rpc("island.stats", {}, "island.stats");
     if (!("benchmarkGeneration" in before)) throw new Error("Install the native crowd-probe build once before using this command");
-    const cases = [
+    const windows = Number(value("--windows", "3"));
+    const minFps = Number(value("--min-fps", "0"));
+    const maxFrameMs = Number(value("--max-frame-ms", "0"));
+    const panelMode = value("--panel", "on");
+    const count = args.includes("--actors") ? Number(option("--actors")) : undefined;
+    if (!Number.isInteger(windows) || windows < 3 || windows > 60 || !Number.isFinite(minFps) || minFps < 0 ||
+        !Number.isFinite(maxFrameMs) || maxFrameMs < 0 || !["on", "off", "both"].includes(panelMode) ||
+        (count !== undefined && (!Number.isInteger(count) || count < 1 || count > 8))) throw new Error("Invalid crowd measurement options");
+    const configurations = count !== undefined ? [{ actors: count, motion: "walk", terrain: true }] : [
       { actors: 0, motion: "frozen", terrain: true },
       ...[1, 2, 3, 4, 6, 8].map(actors => ({ actors, motion: "walk", terrain: true })),
       ...[1, 2, 3, 4, 6, 8].map(actors => ({ actors, motion: "frozen", terrain: true })),
       ...[2, 4, 8].map(actors => ({ actors, motion: "frozen", terrain: false })),
     ];
-    const results: Record<string, unknown>[] = [];
-    const persist = () => writeFileSync(`${out}/crowd.json`, JSON.stringify({ host, input: "remote autonomous load test", before, results }, null, 2));
+    const cases = configurations.flatMap(config => (panelMode === "both" ? [false, true] : [panelMode === "on"])
+      .map(panel => ({ ...config, panel })));
+    const results: Record<string, any>[] = [];
+    const persist = () => writeFileSync(`${out}/crowd.json`, JSON.stringify({ host, observedAt: new Date().toISOString(), input: "remote autonomous load test", criteria: { windows, minFps, maxFrameMs, panelMode }, before, results }, null, 2));
     try {
       for (const config of cases) {
-        const name = `${config.actors}-${config.motion}-${config.terrain ? "island" : "avatars-only"}`;
+        const name = `${config.actors}-${config.motion}-${config.terrain ? "island" : "avatars-only"}${config.panel ? "" : "-panel-off"}`;
         const accepted = await rpc("island.benchmark", { enabled: true, ...config });
         if (accepted.ok !== true) throw new Error(`Load test rejected: ${accepted.message}`);
         // Exclude configuration, first uploads, and the preceding GPU queue.
         await Bun.sleep(2300);
         const samples: Record<string, any>[] = [];
-        const deadline = Date.now() + 15000;
-        while (samples.length < 3 && Date.now() < deadline) {
+        const deadline = Date.now() + windows * 1200 + 10000;
+        let reported = 0;
+        while (samples.length < windows && Date.now() < deadline) {
           const stats = await rpc("island.stats", {}, "island.stats");
           if (stats.actorCount !== config.actors || stats.actorMotion !== config.motion || stats.terrainEnabled !== Number(config.terrain)) throw new Error("Load test changed while measuring");
-          if (Number(stats.samples) > 0 && stats.measuredBenchmarkGeneration === stats.benchmarkGeneration &&
+          if (Number(stats.samples) > 0 && stats.panel === Number(config.panel) && stats.measuredBenchmarkGeneration === stats.benchmarkGeneration &&
               !samples.some(row => row.elapsedMs === stats.elapsedMs)) samples.push(stats);
-          if (samples.length < 3) await Bun.sleep(450);
+          if (samples.length >= reported + 10) {
+            reported = samples.length;
+            console.log(`${name}: ${samples.length}/${windows} windows; latest ${Number(stats.fps).toFixed(2)} FPS`);
+          }
+          if (samples.length < windows) await Bun.sleep(450);
         }
-        if (samples.length !== 3) throw new Error("Missing complete measurement windows");
+        if (samples.length !== windows) throw new Error("Missing complete measurement windows");
         const frames = samples.reduce((sum, row) => sum + row.samples, 0);
         const average = (key: string) => samples.reduce((sum, row) => sum + row[key] * row.samples, 0) / frames;
         const result = { ...config, name, frames, fps: 1000 / average("frameMs"),
           updateSkinMs: average("updateSkinMs"), uploadMs: average("uploadMs"),
           drawUiMs: average("drawUiMs"), gpuMs: average("gpuPreviousMs"),
           triangles: (samples.at(-1)!.avatarVertices + samples.at(-1)!.terrainVertices) / 3,
+          minWindowFps: Math.min(...samples.map(row => row.fps)),
+          maxFrameMs: Math.max(...samples.map(row => row.maxMs)),
+          maxP95Ms: Math.max(...samples.map(row => row.p95Ms)),
+          passed: samples.every(row => (!minFps || row.fps >= minFps) && (!maxFrameMs || row.maxMs <= maxFrameMs)),
           samples };
         results.push(result); persist();
         console.log(`${name}: ${result.fps.toFixed(2)} FPS / skin ${result.updateSkinMs.toFixed(2)} ms / upload ${result.uploadMs.toFixed(2)} ms / GPU ${result.gpuMs.toFixed(2)} ms`);
@@ -120,6 +139,7 @@ try {
       results.push({ restored: after }); persist();
     }
     console.log(`Saved crowd scaling and GPU isolation receipts: ${out}`);
+    if (results.some(result => result.passed === false)) throw new Error("Crowd measurement did not meet the requested FPS/frame-time criteria; see saved receipts");
   } else if (command === "probe" || command === "bench") {
     const out = resolve(value("--out", `${root}/dist/island/hardware/${Date.now()}`));
     mkdirSync(out, { recursive: true });

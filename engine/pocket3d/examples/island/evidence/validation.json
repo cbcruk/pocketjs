@@ -124,12 +124,12 @@
     }
   ],
   "validation": {
-    "portable_tests": 15,
+    "portable_tests": 16,
     "desktop_pocket3d_tests": 21,
     "clippy": "pass",
     "glb_clips": 18,
     "gpu_capture": "Azahar 2125.1.2 software rasterizer, native 400x240 + 320x240",
-    "hardware": "physical build ea548e2bcae3: all 16 crowd and GPU isolation cases completed; 2 walking actors 38.35 FPS, 4 walking actors 29.44 FPS; 6 frozen actors plus island 59.83 FPS, 8 frozen 58.52 FPS; restored single player 59.85 FPS",
+    "hardware": "preceding CPU build ea548e2bcae3: 2 walkers 38.35 FPS, 4 walkers 29.44 FPS; GPU build f28abb50c3c2 uploaded byte-exactly, awaiting physical app launch for sustained two-actor acceptance",
     "network": "local only",
     "performance_stats": "pass: native C FPS, percentile, stall, reset and bounded-history tests",
     "performance_menu": "pass: Azahar native chord open/hold/close/release, GPU readback and SD export",
@@ -138,13 +138,15 @@
     "live_camera": "pass: Azahar accepted camera span edit, invalid bound rejected with active script retained, original camera restored",
     "gait": "pass: actual post-collision distance drives locomotion phase, partial stick and walk/run transitions preserve phase, blocked movement idles; authored stance foot drift/height under 1.2 cm at two speeds for Walk and Run",
     "hardware_chat": "pass: neutral and happy expressions with local chat, seated bubble GPU readback; returned to standing",
-    "crowd": "pass: physical paired TCP, three complete timing windows per case, matching workload generations, independent walking positions and animation clocks, frozen states unchanged, paired GPU captures for 2/4/8 walkers, player position and chat restored"
+    "crowd": "pass: physical paired TCP, three complete timing windows per case, matching workload generations, independent walking positions and animation clocks, frozen states unchanged, paired GPU captures for 2/4/8 walkers, player position and chat restored",
+    "gpu_skin": "pass: two world configurations, 360 poses across motion/expressions/visibility match CPU geometry and lighting; GPU presentation creates no CPU vertex stream; 11 software PICA captures differ from the CPU reference by at most 1 per color channel",
+    "gpu_skin_devlink": "pass: committed release f28abb50c3c2 on Azahar OpenGL, resident GPU path identified, invalid panel rejected, independent actors and panel-on/off CLI windows, player restored"
   },
   "sha256": {
-    "release_3dsx": "1ed4c4d2bc7f8e739f4427e63c05721e5705a7a054618d9369c7f54ff8e16105",
-    "capture_3dsx": "5c688cb2b6367af582169e48ffff349b0059f63a80af3c4d6835186a9d29b193",
+    "release_3dsx": "fcffc2e3ddbccc77c4fe13684e903d5e8b0c0aa53bc136a4b6021f4de2669d5c",
+    "capture_3dsx": "1b69488db886fe57c00d4fb05e4f0ffdc9b0f7610a8ea2c7903bf027d631956a",
     "mira_glb": "db9f29f960e00906b4f86a30a13b6bad276ac47117b302683773b3749e516d88",
     "mira_p3m": "6a03df302eaf2bac6d63faa8b0c37e39945124104a82070ea50ad95cfbd3fa10"
   },
-  "source_revision": "ea548e2bcae31bcd04f6a78bbe3671a16890b510"
+  "source_revision": "f28abb50c3c2769ef85fd39aadd57bdad5463795"
 }

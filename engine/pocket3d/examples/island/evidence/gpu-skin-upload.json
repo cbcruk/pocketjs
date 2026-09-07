@@ -1,0 +1,10 @@
+{
+  "host": "192.168.8.102",
+  "path": "/3DS/pocket-island/pocket-island.3dsx",
+  "source_revision": "f28abb50c3c2",
+  "sha256": "fcffc2e3ddbccc77c4fe13684e903d5e8b0c0aa53bc136a4b6021f4de2669d5c",
+  "bytes": 2253340,
+  "previous_sha256": "1ed4c4d2bc7f8e739f4427e63c05721e5705a7a054618d9369c7f54ff8e16105",
+  "readback": "byte-exact",
+  "uploaded_at": "2026-09-07T13:53:19.694500+00:00"
+}

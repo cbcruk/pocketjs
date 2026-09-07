@@ -77,7 +77,20 @@ Paired GPU screenshots cover 2, 4 and 8 walking actors. This measures the
 current renderer and scene; it does not establish a universal hardware polygon
 limit or include network, voice or remote-player logic.
 
-On the physical New 3DS, build `ea548e2bcae3` measured **38.35 FPS for two
+For sustained two-actor acceptance, collect **60 completed windows with the
+panel off and another 60 with it on**:
+
+```sh
+bun island crowd --host <ip> --actors 2 --windows 60 --panel both --min-fps 59.5 --max-frame-ms 25
+```
+
+The command saves the minimum window FPS, maximum frame duration and maximum
+p95. It restores the player and exits with a failure if any window falls below
+the requested FPS or exceeds the frame-time bound. Screenshots are taken after
+each measured case. These thresholds use the preceding single-player result of
+about 59.8 FPS as the reference for the 60 FPS target.
+
+Before GPU skinning, physical New 3DS build `ea548e2bcae3` measured **38.35 FPS for two
 independent walking actors** and **29.44 FPS for four**, with the island and
 performance panel visible. The two-actor case spent 10.69 ms in update/skin,
 3.68 ms in upload and 11.61 ms in the overlapping GPU queue. Frozen poses that
@@ -150,8 +163,19 @@ short swing arc, and exports the stride with the assets. Tests verify stance
 foot drift and height within **1.2 cm** at two movement speeds for both clips.
 
 The host requests **New 3DS CPU speedup**, matching the PocketJS host. Old 3DS
-keeps its supported clock. Material color roots are reused within each run of
-vertices with the same color; joint visibility is computed once per pose.
+keeps its supported clock. **The PICA200 skins and lights the character's
+vertices.** Rust samples and interpolates the 29-node skeleton, then C uploads
+the 3-by-4 affine matrices as shader uniforms. The 4,671 unique vertices and
+16-bit indices are uploaded once and shared by all actors. Hidden expression
+ranges are omitted without rebuilding the index buffer; the shadow mesh is
+also shared. Material color roots are computed when the resident mesh is
+created. The portable CPU renderer remains available for comparison tests.
+
+In performance receipts, `skinning: "gpu-rigid-indexed"` identifies this path.
+The existing `updateSkinMs` field now measures CPU update and pose evaluation;
+`uploadMs` measures draw preparation. Matrix uniform submission is included in
+`drawUiMs`. **Dynamic vertex upload bytes per frame are zero.** GPU queue time
+includes the shader's skinning and lighting work and overlaps CPU work.
 The island mesh has **9,010 triangles**, down from 24,608. The character asset
 has **8,496 triangles across all face layers**, down from 13,152; inactive
 layers are omitted from submission. Flat paths and flower petals use triangle

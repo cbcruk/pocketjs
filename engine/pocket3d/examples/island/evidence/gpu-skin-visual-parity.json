@@ -1,0 +1,97 @@
+{
+  "environment": "Azahar software PICA renderer; functional and visual evidence only",
+  "cpu_capture_source": "ea548e2bcae3",
+  "gpu_capture_build_label": "ddbe62a863ce+dirty",
+  "gpu_renderer_source": "f28abb50c3c2",
+  "note": "GPU capture precedes the source commit; subsequent formatting and CSV argument cast do not change rendered geometry. The release connection test uses the committed f28abb50c3c2 binary.",
+  "frames": [
+    {
+      "frame": 1,
+      "max_channel_difference": 1,
+      "mean_channel_difference": 3.4722222222222224e-06,
+      "changed_channels": 1,
+      "cpu_sha256": "133fcd68dcf0d826cd22a32de0485d18ea7c3ad50e31dac0885faa665aa6caa0",
+      "gpu_sha256": "c67e90acd0c786e722db9a9f33150bd9339965d0cd5e0695ae09ac2e88ebf1b9"
+    },
+    {
+      "frame": 31,
+      "max_channel_difference": 1,
+      "mean_channel_difference": 6.944444444444445e-06,
+      "changed_channels": 2,
+      "cpu_sha256": "b0a91d7c00f690ad5577a4dd1bef38b092b69446b3639146db57aa574570adc1",
+      "gpu_sha256": "56aaec8aea93a71a7f0139c525e8c83cefc602d5ad9bbd70a02514efd835cbc0"
+    },
+    {
+      "frame": 61,
+      "max_channel_difference": 0,
+      "mean_channel_difference": 0.0,
+      "changed_channels": 0,
+      "cpu_sha256": "049bb3941f5b25f9610d71e103e0b91b8db763db86fb0cd4b22f46438633fc99",
+      "gpu_sha256": "049bb3941f5b25f9610d71e103e0b91b8db763db86fb0cd4b22f46438633fc99"
+    },
+    {
+      "frame": 91,
+      "max_channel_difference": 1,
+      "mean_channel_difference": 1.0416666666666666e-05,
+      "changed_channels": 3,
+      "cpu_sha256": "d555420c00c1988ae8859e204a32a7fed62f6440424fbabb9dfd114b2a03bafb",
+      "gpu_sha256": "3c1487663d0880d31ae2966214e8e030758c5833e4af81f84acdf68e8b6fdaa8"
+    },
+    {
+      "frame": 121,
+      "max_channel_difference": 1,
+      "mean_channel_difference": 6.944444444444445e-06,
+      "changed_channels": 2,
+      "cpu_sha256": "176a1b47d00d67bc89e395afe81f14d6838ba8034afdbf5191c00c3b3aec207b",
+      "gpu_sha256": "1d8e9caa92678daaed69c1a484126134004a7e3446130da2040bd413b31f267e"
+    },
+    {
+      "frame": 151,
+      "max_channel_difference": 1,
+      "mean_channel_difference": 1.388888888888889e-05,
+      "changed_channels": 4,
+      "cpu_sha256": "27e81a2fd47ab1129c0b2fe867759d7cb1d2d0078d36380eb65157af8cb1f0be",
+      "gpu_sha256": "8bb54bc039774f97d659c83410fd800b920ffc7bfd72df03a12de64e26143c6e"
+    },
+    {
+      "frame": 181,
+      "max_channel_difference": 1,
+      "mean_channel_difference": 1.736111111111111e-05,
+      "changed_channels": 5,
+      "cpu_sha256": "2b078237d7118d8051801c2230aa974c4d297ee108e8d3f8ed1f0e9d6af39851",
+      "gpu_sha256": "0edd56d8bc2d1b4504ecd598ed6b698fa7372d73e89e564bb57dd1f6244186ef"
+    },
+    {
+      "frame": 211,
+      "max_channel_difference": 1,
+      "mean_channel_difference": 1.388888888888889e-05,
+      "changed_channels": 4,
+      "cpu_sha256": "1599d21b7b8f79687c15fd8cb89406a9c627722aff450e93a3eb91a75dc46f94",
+      "gpu_sha256": "70f4922a1202f1b12568b85c7d9d056074b2e534b5487898f7a1724a11edb1d1"
+    },
+    {
+      "frame": 241,
+      "max_channel_difference": 1,
+      "mean_channel_difference": 2.0833333333333333e-05,
+      "changed_channels": 6,
+      "cpu_sha256": "d5adfe813af37e1bebe8013fc48658147fca20d407c041b5c91624390a59961b",
+      "gpu_sha256": "a008874fd7a270c44d7acfe41b612f1c0411811c9b67ba64b19bbbd35e8dd517"
+    },
+    {
+      "frame": 301,
+      "max_channel_difference": 1,
+      "mean_channel_difference": 1.0416666666666666e-05,
+      "changed_channels": 3,
+      "cpu_sha256": "c0d3357d00a564dd0ccceb59080d7358100503aab27d0993227bb7d9c6dd50ca",
+      "gpu_sha256": "83da63c40835a389d6f701bf616c23e165d8e618c0473499e0ea1a66f04fda95"
+    },
+    {
+      "frame": 331,
+      "max_channel_difference": 1,
+      "mean_channel_difference": 6.944444444444445e-06,
+      "changed_channels": 2,
+      "cpu_sha256": "0d8d7e1f924305935c7025130b8dd41fd1d9b37a3ae181b8def00fd47a61d917",
+      "gpu_sha256": "0fcd53df73d0e3d056993ec008d13302e6198e0e79e6bfabb9f9b36e6eab8cee"
+    }
+  ]
+}

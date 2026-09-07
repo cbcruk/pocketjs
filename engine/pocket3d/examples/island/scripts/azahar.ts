@@ -18,7 +18,9 @@ if (!existsSync(rom)) throw new Error("Build the capture binary with bun tools/i
 mkdirSync(`${user}/config`, { recursive: true });
 for (const dir of ["nand", "sysdata"]) if (existsSync(`${source}/${dir}`)) cpSync(`${source}/${dir}`, `${user}/${dir}`, { recursive: true });
 let config = readFileSync(`${source}/config/qt-config.ini`, "utf8");
-for (const [key, value] of Object.entries({ graphics_api: process.env.ISLAND_GRAPHICS_API ?? "0", resolution_factor: "1", use_vsync: "false", frame_limit: "1000", use_disk_shader_cache: "false", check_for_update_on_start: "false" })) {
+// Software captures provide the pixel reference. Live timing-window tests use
+// OpenGL: software rasterization advances emulated time too slowly for deadlines.
+for (const [key, value] of Object.entries({ graphics_api: process.env.ISLAND_GRAPHICS_API ?? (live ? "1" : "0"), resolution_factor: "1", use_vsync: "false", frame_limit: "1000", use_disk_shader_cache: "false", check_for_update_on_start: "false" })) {
   const line = new RegExp(`^${key}=.*$`, "m");
   if (!line.test(config)) throw new Error(`Missing emulator setting: ${key}`);
   config = config.replace(line, `${key}=${value}`);
@@ -61,6 +63,7 @@ try {
         return await reply;
       };
       const initial = await request("island.stats", {}, "island.stats");
+      if (initial.skinning !== "gpu-rigid-indexed" || initial.dynamicVertexUploadBytes !== 0) throw new Error("Release is not using resident GPU skinning");
       const packageVerdict = client.waitForCtrl(m => m.t === "runtime.install" && m.phase === "rejected");
       await client.sendFrame(POCKET_RUNTIME_MSG.packageBegin, encodePocketRuntimePackageBegin(100, 123n));
       await packageVerdict;
@@ -105,6 +108,8 @@ try {
       writeFileSync(`${fixture}/crowd-screen.png`, (await crowdShot).png);
       const crowdInvalid = await request("island.benchmark", { enabled: true, actors: 9, motion: "walk", terrain: true });
       if (crowdInvalid.ok !== false) throw new Error("Unbounded actor count accepted");
+      const invalidPanel = await request("island.benchmark", { enabled: true, actors: 2, motion: "walk", terrain: true, panel: "false" });
+      if (invalidPanel.ok !== false) throw new Error("Invalid panel flag accepted");
       await request("island.benchmark", { enabled: true, actors: 8, motion: "frozen", terrain: true });
       await Bun.sleep(1200);
       const frozen = await request("island.stats", {}, "island.stats");
@@ -122,6 +127,11 @@ try {
         crowdMoving, crowdInvalid, frozen, frozenLater, empty, crowdRestored }, null, 2));
       console.log(`PASS: authenticated TCP, JS replacement/rejection, live chat, remote movement and paired GPU screenshot. ${fixture}`);
     } finally { client.close(); }
+    const crowd = Bun.spawn([process.execPath, `${root}/engine/pocket3d/examples/island/scripts/dev.ts`, "crowd",
+      "--host", "127.0.0.1", "--key", `${user}/sdmc/pocketjs/runtime/dev.key`,
+      "--actors", "2", "--windows", "3", "--panel", "both", "--out", `${fixture}/crowd-probe`],
+      { stdout: "inherit", stderr: "inherit" });
+    if (await crowd.exited !== 0) throw new Error("Crowd CLI did not collect panel-on/off windows and restore player state");
   } else {
   const deadline = Date.now() + Number(process.env.ISLAND_E2E_TIMEOUT_MS ?? 120000);
   while (!existsSync(`${captures}/done`)) {
