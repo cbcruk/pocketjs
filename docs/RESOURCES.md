@@ -387,3 +387,46 @@ waits for `drain`. It retains the unconsumed suffix of one input chunk, the
 bounded frame decoder and at most eight admitted results. A slow receiver
 pauses progress instead of triggering a backlog disconnect. This keeps rapid
 viewport cancellation from creating an unbounded queue of remote image work.
+
+### Prepared 2D geometry
+
+`createOffloadMeshCollection` gives prepared geometry the same demand, retry,
+materialization, fallback and eviction lifecycle as remote images. The provider
+returns `{ format: "mesh2d-v1", bytes }`; `ResourceMesh` borrows the resulting
+native handle. Mesh handles and texture handles have separate namespaces.
+
+```tsx
+const geometry = createOffloadMeshCollection(runtime, io, {
+  key: tile => `${tile.source}/${tile.z}/${tile.x}/${tile.y}`,
+  method: "map.mesh",
+  payload: JSON.stringify,
+  maxEntries: 40,
+  maxViews: 2,
+  maxDemandsPerView: 24,
+});
+const view = createResourceView(geometry, {
+  demand: () => visible().map(input => ({ input, priority: 0, pin: true })),
+});
+<ResourceMesh state={() => view.state(tile)} fallback={() => <TileSkeleton />} />
+```
+
+**Each entry contains at most 4,096 vertices and 2,048 triangles.** The provider
+quantizes coordinates to sixteenths of a logical pixel and sends indexed triangles
+with ABGR colors. Native validation rejects coordinates outside the declared
+rectangle, invalid indices, unsupported versions and inconsistent byte counts.
+The entry is at most 36,880 bytes. No PBF parser, polygon tessellator or network
+operation runs in guest JavaScript.
+
+**Images and meshes share eight staging slots and one native materialization
+per frame on 3DS.** Cancellation retains transport credit until the response or
+connection loss. Late and mismatched responses return staging without acquiring
+residency. A collection frees its mesh handles on eviction and cleanup; old
+handles cannot draw a newly allocated mesh. Hosts without mesh operations cannot
+request this response extension.
+
+The core applies the View transform, clips triangles with fixed stack scratch,
+and emits the existing TRI drawing commands. The 3DS GPU rasterizes those
+commands; Wasm and other existing TRI backends retain the same pixel contract.
+This implementation still transforms geometry on the native CPU each frame;
+it does not retain device vertex buffers across frames. Bound both visible mesh
+count and provider detail when choosing an application frame budget.

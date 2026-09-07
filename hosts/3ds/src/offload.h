@@ -11,6 +11,7 @@ int offload_session(void);
 bool offload_submit(const char *bytes, size_t length);
 size_t offload_take(char *out);
 const uint8_t *offload_image(uint32_t token, unsigned *width, unsigned *height);
+const uint8_t *offload_mesh(uint32_t token, unsigned *length);
 void offload_release_image(uint32_t token);
 void offload_reset(void);
 #endif

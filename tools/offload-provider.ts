@@ -3,9 +3,9 @@
 import { connect } from "node:net";
 import { resolve } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
-import { OFFLOAD, type OffloadRequest, type OffloadProviderReply, type OffloadImage } from "../contracts/spec/offload.ts";
-import { OffloadDecoder, encodeOffloadRecord, encodeOffloadImage } from "./offload-wire.ts";
-export type { OffloadImage } from "../contracts/spec/offload.ts";
+import { OFFLOAD, type OffloadRequest, type OffloadProviderReply, type OffloadImage, type OffloadMesh } from "../contracts/spec/offload.ts";
+import { OffloadDecoder, encodeOffloadRecord, encodeOffloadImage, encodeOffloadMesh } from "./offload-wire.ts";
+export type { OffloadImage, OffloadMesh } from "../contracts/spec/offload.ts";
 
 export function connectOffloadProvider(options: {
   address: string; key: string; worker: string | URL; data?: unknown;
@@ -30,7 +30,7 @@ export function connectOffloadProvider(options: {
     const log = (message: string) => options.log?.(`Session ${session}: ${message}`);
     let worker: { postMessage(value: unknown): void; terminate(): void | Promise<unknown> } | undefined;
     let closed = false, reason = "device closed connection";
-    const pending = new Map<number, { image: boolean; method: string; started: number }>();
+    const pending = new Map<number, { response?: "image" | "mesh"; method: string; started: number }>();
     const deadlines = new Map<number, ReturnType<typeof setTimeout>>();
     const replies: Buffer[] = [];
     let writing = false, held: Buffer | undefined, consumed = 0;
@@ -54,8 +54,9 @@ export function connectOffloadProvider(options: {
         clearTimeout(deadlines.get(reply.id)); deadlines.delete(reply.id);
         try {
           if (typeof reply.payload === "string" && reply.payload.length > OFFLOAD.payloadChars) throw new Error("Result budget exceeded");
-          if (reply.image && !request?.image) throw new Error("Unrequested image response");
-          const record = reply.image ? encodeOffloadImage(reply.id, reply.image) : encodeOffloadRecord(JSON.stringify(reply));
+          if (reply.image && request?.response !== "image") throw new Error("Unrequested image response");
+          if (reply.mesh && request?.response !== "mesh") throw new Error("Unrequested mesh response");
+          const record = reply.mesh ? encodeOffloadMesh(reply.id, reply.mesh) : reply.image ? encodeOffloadImage(reply.id, reply.image) : encodeOffloadRecord(JSON.stringify(reply));
           if (options.trace) log(`reply id=${reply.id} method=${request!.method} providerMs=${Date.now() - request!.started} bytes=${record.length} error=${!!reply.error} pending=${pending.size} queued=${replies.length}`);
           // Each queued reply replaces one admitted request. Slow LAN writes
           // consume credit; they are not an invalid connection.
@@ -94,9 +95,9 @@ export function connectOffloadProvider(options: {
       if (request.v !== 1 || !Number.isSafeInteger(request.id) || request.id < 1 || request.id > 0xffffffff ||
           typeof request.method !== "string" || !/^[a-z][a-z0-9_.-]{0,63}$/.test(request.method) ||
           typeof request.payload !== "string" || request.payload.length > OFFLOAD.payloadChars ||
-          request.response !== undefined && request.response !== "image" ||
+          request.response !== undefined && request.response !== "image" && request.response !== "mesh" ||
           pending.size >= OFFLOAD.pending || pending.has(request.id)) throw new Error("Invalid request");
-      pending.set(request.id, { image: request.response === "image", method: request.method, started: Date.now() });
+      pending.set(request.id, { response: request.response, method: request.method, started: Date.now() });
       if (options.trace) log(`request id=${request.id} method=${request.method} pending=${pending.size}`);
       deadlines.set(request.id, setTimeout(() => fail(`request deadline: ${request.method} id=${request.id}`), 9000));
       worker!.postMessage(request);
@@ -151,7 +152,7 @@ export function connectOffloadProvider(options: {
 
 /** Worker-side allowlist. A missing method cannot open arbitrary resources. */
 export async function dispatchOffload(
-  methods: Readonly<Record<string, (payload: string) => string | OffloadImage | Promise<string | OffloadImage>>>,
+  methods: Readonly<Record<string, (payload: string) => string | OffloadImage | OffloadMesh | Promise<string | OffloadImage | OffloadMesh>>>,
   request: OffloadRequest,
 ): Promise<OffloadProviderReply> {
   try {
@@ -159,6 +160,10 @@ export async function dispatchOffload(
     if (!handler) throw new Error("Capability not granted");
     const payload = await handler(request.payload);
     if (typeof payload !== "string") {
+      if (payload.format === "mesh2d-v1") {
+        if (request.response !== "mesh") throw new Error("Mesh response was not requested");
+        encodeOffloadMesh(request.id,payload); return {id:request.id,mesh:payload};
+      }
       if (request.response !== "image") throw new Error("Image response was not requested");
       encodeOffloadImage(request.id, payload);
       return { id: request.id, image: payload };

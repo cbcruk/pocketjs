@@ -70,3 +70,16 @@ export function ResourceImage(props: ResourceImageProps): JSX.Element {
   insert(frame as unknown as NodeMirror, content);
   return frame;
 }
+
+/** Borrowed prepared geometry. Coordinates fit the resource's logical envelope. */
+export interface MeshResource { handle: number; width: number; height: number }
+export function ResourceMesh(props: ResourceImageProps): JSX.Element {
+  const frame=View({get class(){return props.class;},get style(){return props.style;},get debugName(){return props.debugName;}});
+  const content=ResourceBoundary({state:props.state,fallback:props.fallback,errorFallback:props.errorFallback,children:value=>{
+    let node: NodeMirror | undefined;
+    const result=View({ref:n=>{node=n;},get style(){return {posType:1,insetL:0,insetT:0,width:value().width,height:value().height};}});
+    createRenderEffect(()=>{if(node) { const ops=getOps(); if(!ops.setMesh) throw new Error("Host does not implement meshes"); ops.setMesh(node.id,value().handle); }});
+    return result;
+  }});
+  insert(frame as unknown as NodeMirror,content);return frame;
+}

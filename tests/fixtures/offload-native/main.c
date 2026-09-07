@@ -27,6 +27,14 @@ int main(void) {
       for (unsigned n = 0; n < 256 * 256 * 2; n++) assert(pixels[n] == (n & 255));
       assert(pixels[-3] == 2); /* native IMG envelope uses linear filtering */
       offload_release_image(token); assert(!offload_image(token, &w, &h));
+      const char *request="{\"v\":1,\"id\":2,\"method\":\"test.mesh\",\"payload\":\"{}\",\"response\":\"mesh\"}";
+      assert(offload_submit(request,strlen(request))); phase=2;
+    } else if (length && phase==2) {
+      unsigned id,token,w,h,bytes;
+      assert(sscanf(record,"{\"id\":%u,\"mesh\":{\"token\":%u,\"width\":%u,\"height\":%u,\"bytes\":%u}}",&id,&token,&w,&h,&bytes)==5);
+      assert(id==2 && w==256 && h==256 && bytes==16); unsigned n;
+      const uint8_t *mesh=offload_mesh(token,&n); assert(mesh && n==16 && !memcmp(mesh,"PMH1",4));
+      assert(!offload_image(token,&w,&h)); offload_release_image(token); assert(!offload_mesh(token,&n));
       offload_reset(); assert(offload_session() == 0); phase = 3;
     } else if (length && phase == 4) { assert(strstr(record, "network-ok")); phase = 5; }
     svcSleepThread(1000000);

@@ -1,4 +1,4 @@
-import { OFFLOAD, type OffloadOps, type OffloadReply, type OffloadImageTicket } from "../../contracts/spec/offload.ts";
+import { OFFLOAD, type OffloadOps, type OffloadReply, type OffloadImageTicket, type OffloadMeshTicket } from "../../contracts/spec/offload.ts";
 import { registerServicePump } from "./services.ts";
 
 export { OFFLOAD };
@@ -12,8 +12,12 @@ export function uploadCoverage(base64: string, width: number, height: number, fo
 }
 export type OffloadResult = { ok: true; value: string } | { ok: false; error: string };
 type Callback = (result: OffloadResult) => void;
-type Pending = { record: string; callback: Callback | undefined; deadline: number; sent: boolean; session: number; image: boolean };
+type Pending = { record: string; callback: Callback | undefined; deadline: number; sent: boolean; session: number; response?: "image" | "mesh" };
 
+function meshTicket(value: unknown): value is OffloadMeshTicket {
+  const v=value as OffloadMeshTicket | undefined;
+  return !!v && Number.isSafeInteger(v.token) && v.token>0 && v.token<=0xffffffff && Number.isInteger(v.width) && v.width>0 && v.width<=4095 && Number.isInteger(v.height) && v.height>0 && v.height<=4095 && Number.isInteger(v.bytes) && v.bytes>=16 && v.bytes<=36880;
+}
 function imageTicket(value: unknown): value is OffloadImageTicket {
   const v = value as OffloadImageTicket | undefined;
   const side = (n: number) => Number.isInteger(n) && n >= 16 && n <= 256 && (n & (n - 1)) === 0;
@@ -31,13 +35,13 @@ export function createOffloadClient(ops: OffloadOps) {
     pending.delete(id);
     item.callback?.(result);
   };
-  function request(method: string, payload: string, callback: Callback, image = false): number {
+  function request(method: string, payload: string, callback: Callback, response?: "image" | "mesh"): number {
       if (disposed || pending.size >= OFFLOAD.pending) return 0;
       if (!/^[a-z][a-z0-9_.-]{0,63}$/.test(method)) throw new Error("Invalid offload capability");
       if (typeof payload !== "string" || payload.length > OFFLOAD.payloadChars) throw new Error("Offload payload exceeds budget");
       if (nextId > 0xffffffff) throw new Error("Offload request ID exhausted; restart the realm");
       const id = nextId++;
-      const record = JSON.stringify({ v: 1, id, method, payload, ...(image ? { response: "image" } : {}) });
+      const record = JSON.stringify({ v: 1, id, method, payload, ...(response ? { response } : {}) });
       // Conservative UTF-8 bound, refined without allocating a byte buffer.
       let bytes = 0;
       for (let i = 0; i < record.length; i++) {
@@ -46,7 +50,7 @@ export function createOffloadClient(ops: OffloadOps) {
         else bytes += c < 128 ? 1 : c < 2048 ? 2 : 3;
       }
       if (bytes > OFFLOAD.recordBytes) throw new Error("Offload record exceeds budget");
-      pending.set(id, { record, callback, deadline: frame + OFFLOAD.timeoutFrames, sent: false, session: 0, image });
+      pending.set(id, { record, callback, deadline: frame + OFFLOAD.timeoutFrames, sent: false, session: 0, response });
       return id;
   }
   return {
@@ -58,8 +62,18 @@ export function createOffloadClient(ops: OffloadOps) {
     request,
     requestImage(method: string, payload: string, callback: Callback): number {
       if (!ops.uploadImage || !ops.releaseImage) throw new Error("Host does not implement offload images");
-      return request(method, payload, callback, true);
+      return request(method, payload, callback, "image");
     },
+    requestMesh(method: string, payload: string, callback: Callback): number {
+      if (!ops.uploadMesh || !ops.releaseMesh) throw new Error("Host does not implement offload meshes");
+      return request(method,payload,callback,"mesh");
+    },
+    uploadMesh(raw: string) {
+      const ticket: unknown=JSON.parse(raw); if (!meshTicket(ticket)) throw new Error("Invalid mesh ticket");
+      const handle=ops.uploadMesh?.(ticket.token) ?? -1; if(handle<0) throw new Error("Mesh staging or frame upload credit unavailable");
+      return {handle,width:ticket.width,height:ticket.height};
+    },
+    releaseMesh(raw: string) { const ticket: unknown=JSON.parse(raw); if(meshTicket(ticket)) ops.releaseMesh?.(ticket.token); },
     /** The resource scheduler owns this small serialized ticket after delivery. */
     uploadImage(raw: string) {
       const ticket: unknown = JSON.parse(raw);
@@ -90,14 +104,18 @@ export function createOffloadClient(ops: OffloadOps) {
           const reply = JSON.parse(raw) as OffloadReply;
           const item = pending.get(reply.id);
           const image = imageTicket(reply.image) ? reply.image : undefined;
-          if (item?.sent && item.session === session && session > 0) {
+          const mesh = meshTicket(reply.mesh) ? reply.mesh : undefined;
+          const valid = item?.sent && item.session === session && session > 0;
+          const expected = !!valid && !!item.callback && !(image && mesh);
+          if (image && (!expected || item?.response !== "image")) ops.releaseImage?.(image.token);
+          if (mesh && (!expected || item?.response !== "mesh")) ops.releaseMesh?.(mesh.token);
+          if (valid) {
             delivered = !!item.callback;
-            if (image && (!item.image || !item.callback)) ops.releaseImage?.(image.token);
-            finish(reply.id, item.image && image ? { ok: true, value: JSON.stringify(image) }
-              : !item.image && !image && typeof reply.payload === "string" && reply.payload.length <= OFFLOAD.payloadChars
-              ? { ok: true, value: reply.payload }
-              : { ok: false, error: typeof reply.error === "string" ? reply.error.slice(0, 160) : "Malformed reply" });
-          } else if (image) ops.releaseImage?.(image.token);
+            const ticket = !(image && mesh) ? item.response === "image" ? image : item.response === "mesh" ? mesh : undefined : undefined;
+            finish(reply.id, ticket ? {ok:true,value:JSON.stringify(ticket)}
+              : !item.response && !image && !mesh && typeof reply.payload === "string" && reply.payload.length <= OFFLOAD.payloadChars
+              ? {ok:true,value:reply.payload} : {ok:false,error:typeof reply.error === "string" ? reply.error.slice(0,160) : "Malformed reply"});
+          }
         } catch { /* A malformed bounded record cannot stop the UI. */ }
       }
       let submitted = 0;

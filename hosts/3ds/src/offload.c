@@ -53,12 +53,16 @@ size_t offload_take(char *out) {
 }
 const uint8_t *offload_image(uint32_t token, unsigned *width, unsigned *height) {
   OffloadImageSlot *slot = image_borrow(&images, token);
-  if (!slot) return NULL;
+  if (!slot || slot->mesh) return NULL;
   *width = slot->width; *height = slot->height;
   /* The last eight bytes of the wire header are also an IMG entry header.
    * Set its linear filter bit only after worker validation/publication. */
   slot->wire[13] = 2;
   return slot->wire + OFFLOAD_IMAGE_HEADER;
+}
+const uint8_t *offload_mesh(uint32_t token, unsigned *length) {
+  OffloadImageSlot *slot=image_borrow(&images,token); if(!slot || !slot->mesh) return NULL;
+  *length=slot->length; return slot->wire+8;
 }
 void offload_release_image(uint32_t token) { image_release(&images, token); }
 void offload_reset(void) {
@@ -160,7 +164,9 @@ static void serve(void *unused) {
             if (binary) {
               if (!image_publish(&images, image, image_length, (uint32_t)generation)) { alive = false; continue; }
               image_token = image->token;
-              int size = snprintf(rx + 4, OFFLOAD_BYTES,
+              int size = image->mesh ? snprintf(rx+4,OFFLOAD_BYTES,
+                "{\"id\":%u,\"mesh\":{\"token\":%u,\"width\":%u,\"height\":%u,\"bytes\":%u}}",
+                image->request,image_token,image->width,image->height,image->length) : snprintf(rx + 4, OFFLOAD_BYTES,
                 "{\"id\":%u,\"image\":{\"token\":%u,\"width\":%u,\"height\":%u}}",
                 image->request, image_token, image->width, image->height);
               want = (size_t)size + 4;

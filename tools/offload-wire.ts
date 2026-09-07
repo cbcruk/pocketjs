@@ -1,4 +1,4 @@
-import { OFFLOAD, OFFLOAD_IMAGE, type OffloadImage } from "../contracts/spec/offload.ts";
+import { OFFLOAD, OFFLOAD_IMAGE, OFFLOAD_MESH, type OffloadMesh, type OffloadImage } from "../contracts/spec/offload.ts";
 
 export function encodeOffloadImage(id: number, image: OffloadImage): Buffer {
   const valid = (n: number) => Number.isInteger(n) && n >= 16 && n <= OFFLOAD_IMAGE.maxSide && (n & (n - 1)) === 0;
@@ -46,4 +46,20 @@ export class OffloadDecoder {
     }
     return offset;
   }
+}
+
+export function validateMesh(bytes: Uint8Array) {
+  if (!(bytes instanceof Uint8Array) || bytes.length < 16 || bytes.length > OFFLOAD_MESH.maxBytes) throw new Error("Invalid mesh size");
+  const v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const width = v.getUint16(4,true), height = v.getUint16(6,true), nv = v.getUint16(8,true), nt = v.getUint16(10,true);
+  if (v.getUint32(0,true) !== 0x31484d50 || v.getUint32(12,true) || !width || !height || width > 4095 || height > 4095 || nv > OFFLOAD_MESH.maxVertices || nt > OFFLOAD_MESH.maxTriangles || bytes.length !== 16+nv*4+nt*10) throw new Error("Invalid mesh envelope");
+  for (let i=0;i<nv;i++) if (v.getUint16(16+i*4,true)>width*16 || v.getUint16(18+i*4,true)>height*16) throw new Error("Invalid mesh coordinate");
+  for (let i=0;i<nt;i++) for (let j=0;j<3;j++) if (v.getUint16(16+nv*4+i*10+j*2,true)>=nv) throw new Error("Invalid mesh index");
+  return {width,height,bytes:bytes.length};
+}
+export function encodeOffloadMesh(id: number, mesh: OffloadMesh): Buffer {
+  if (!Number.isSafeInteger(id) || id<1 || id>0xffffffff || mesh.format!=="mesh2d-v1") throw new Error("Invalid mesh response");
+  validateMesh(mesh.bytes);
+  const bytes = Buffer.allocUnsafe(12 + mesh.bytes.length);
+  bytes.writeUInt32BE((OFFLOAD_IMAGE.flag + bytes.length - 4) >>> 0); bytes.write("PMSH",4); bytes.writeUInt32LE(id,8); bytes.set(mesh.bytes,12); return bytes;
 }

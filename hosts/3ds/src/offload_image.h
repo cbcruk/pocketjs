@@ -13,6 +13,7 @@ typedef struct {
   _Atomic unsigned state;
   uint32_t token, request, generation, length;
   unsigned width, height;
+  bool mesh;
   uint8_t wire[OFFLOAD_IMAGE_HEADER + OFFLOAD_IMAGE_BYTES];
 } OffloadImageSlot;
 typedef struct { OffloadImageSlot slots[OFFLOAD_IMAGE_SLOTS]; uint32_t next_token; } OffloadImages;
@@ -31,15 +32,31 @@ static inline OffloadImageSlot *image_reserve(OffloadImages *images) {
 /* Worker validates every byte count before publishing. Tokens never reuse a
  * live allocation, including across connections and uint32 counter wrap. */
 static inline bool image_publish(OffloadImages *images, OffloadImageSlot *slot, uint32_t length, uint32_t generation) {
-  if (length < OFFLOAD_IMAGE_HEADER || length > sizeof slot->wire || memcmp(slot->wire, "PIMG", 4) || image_u32(slot->wire + 12)) return false;
-  unsigned w = slot->wire[8] | (unsigned)slot->wire[9] << 8, h = slot->wire[10] | (unsigned)slot->wire[11] << 8;
+  if (length < OFFLOAD_IMAGE_HEADER || length > sizeof slot->wire) return false;
+  const bool mesh = !memcmp(slot->wire, "PMSH", 4);
+  unsigned w, h, payload_length;
   uint32_t request = image_u32(slot->wire + 4);
-  if (!request || !generation || w < 16 || h < 16 || w > 256 || h > 256 || (w & (w - 1)) || (h & (h - 1)) || length != OFFLOAD_IMAGE_HEADER + w * h * 2) return false;
+  if (!request || !generation) return false;
+  if (mesh) {
+    if (length < 24 || length > 8 + 36880 || memcmp(slot->wire + 8, "PMH1", 4) || image_u32(slot->wire + 20)) return false;
+    const uint8_t *p=slot->wire+8;
+    w=p[4] | (unsigned)p[5]<<8; h=p[6] | (unsigned)p[7]<<8;
+    unsigned nv=p[8] | (unsigned)p[9]<<8, nt=p[10] | (unsigned)p[11]<<8;
+    if (!w || !h || w>4095 || h>4095 || nv>4096 || nt>2048 || length!=24+nv*4+nt*10) return false;
+    for (unsigned i=0;i<nv;i++) { unsigned x=p[16+i*4] | (unsigned)p[17+i*4]<<8, y=p[18+i*4] | (unsigned)p[19+i*4]<<8; if(x>w*16 || y>h*16) return false; }
+    for (unsigned i=0;i<nt;i++) for (unsigned j=0;j<3;j++) { unsigned at=16+nv*4+i*10+j*2, index=p[at] | (unsigned)p[at+1]<<8; if(index>=nv) return false; }
+    payload_length=length-8;
+  } else {
+    if (memcmp(slot->wire,"PIMG",4) || image_u32(slot->wire+12)) return false;
+    w=slot->wire[8] | (unsigned)slot->wire[9]<<8; h=slot->wire[10] | (unsigned)slot->wire[11]<<8;
+    if (w<16 || h<16 || w>256 || h>256 || (w&(w-1)) || (h&(h-1)) || length!=OFFLOAD_IMAGE_HEADER+w*h*2) return false;
+    payload_length=w*h*2;
+  }
   /* Tokens combine a 29-bit sequence with the slot index. Older tokens cannot
    * release another slot; wrap requires 536 million uploads to the same slot. */
   images->next_token = (images->next_token % 0x1fffffff) + 1;
   slot->token = (images->next_token << 3) | (uint32_t)(slot - images->slots);
-  slot->request = request; slot->generation = generation; slot->length = w * h * 2; slot->width = w; slot->height = h;
+  slot->request = request; slot->generation = generation; slot->length = payload_length; slot->mesh = mesh; slot->width = w; slot->height = h;
   atomic_store_explicit(&slot->state, IMAGE_READY, memory_order_release); return true;
 }
 /* Only the UI calls borrow/release after publication in the incoming queue.

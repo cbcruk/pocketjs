@@ -40,6 +40,7 @@ pub mod anim;
 pub mod codec;
 pub mod damage;
 pub mod draw;
+pub mod mesh;
 pub mod layout;
 pub mod package;
 pub mod pak;
@@ -254,6 +255,7 @@ pub struct Ui {
     textures: Vec<TexSlot>,
     /// LIFO free list of texture slots (freed most recently, reused first).
     tex_free: Vec<u32>,
+    meshes: mesh::Meshes,
     /// Baked rounded-corner disc sprites (see draw::DiscCache).
     discs: draw::DiscCache,
     /// Raster pixels baked for each logical UI pixel. Layout and DrawList
@@ -341,6 +343,7 @@ impl Ui {
             auxiliary: None,
             textures: Vec::new(),
             tex_free: Vec::new(),
+            meshes: mesh::Meshes::new(),
             discs: draw::DiscCache::new(),
             raster_density,
             raster_revision: 1,
@@ -809,9 +812,31 @@ impl Ui {
         self.bump_raster_revision();
     }
 
+    /// Validate a bounded prepared geometry entry and own its native storage.
+    pub fn upload_mesh(&mut self, bytes: &[u8]) -> i32 {
+        let handle = self.meshes.upload(bytes);
+        if handle >= 0 { self.bump_raster_revision(); }
+        handle
+    }
+
+    pub fn free_mesh(&mut self, handle: i32) {
+        self.meshes.free(handle);
+        self.bump_raster_revision();
+    }
+
+    /// Views borrow a generation-tagged geometry handle; a negative value clears it.
+    pub fn set_mesh(&mut self, id: i32, handle: i32) {
+        if handle >= 0 && self.meshes.get(handle).is_none() { return; }
+        let Some(slot) = self.tree.resolve(id) else { return; };
+        let node = &mut self.tree.slots[slot as usize];
+        if node.node_type == spec::NodeType::View as u8 {
+            node.mesh = handle.max(-1);
+            self.bump_raster_revision();
+        }
+    }
+
     /// Bind an uploaded texture to an image node. Handles are 0-based, so
-    /// tex < 0 CLEARS the binding (node.tex = -1, the "none" sentinel);
-    /// unknown/stale positive handles are ignored.
+    /// tex < 0 clears the binding; unknown/stale positive handles are ignored.
     pub fn set_image(&mut self, id: i32, tex: i32) {
         if tex >= 0 && tex_resolve(&self.textures, tex).is_none() {
             return;
@@ -1465,6 +1490,7 @@ impl Ui {
             &self.tree,
             &self.styles,
             &self.fonts,
+            &self.meshes,
             self.frame,
             self.layout.viewport,
             &mut self.textures,
@@ -1491,6 +1517,7 @@ impl Ui {
                 &self.tree,
                 &self.styles,
                 &self.fonts,
+                &self.meshes,
                 self.frame,
                 self.layout.viewport,
                 &mut self.textures,
@@ -1537,6 +1564,7 @@ impl Ui {
             &self.tree,
             &self.styles,
             &self.fonts,
+            &self.meshes,
             self.frame,
             auxiliary.root,
             auxiliary.layout.viewport,
@@ -1563,6 +1591,7 @@ impl Ui {
                 &self.tree,
                 &self.styles,
                 &self.fonts,
+                &self.meshes,
                 self.frame,
                 auxiliary.root,
                 auxiliary.layout.viewport,

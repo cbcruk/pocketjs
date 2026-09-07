@@ -34,6 +34,10 @@ int main(void) {
   for (int n = 1; n < OFFLOAD_IMAGE_SLOTS; n++) { OffloadImageSlot *p = image_reserve(&images); assert(p); prepare(p, n + 2); assert(image_publish(&images, p, sizeof p->wire, 2)); }
   assert(!image_reserve(&images));
   for (int n = 0; n < OFFLOAD_IMAGE_SLOTS; n++) image_release(&images, images.slots[n].token);
+  s=image_reserve(&images);memset(s->wire,0,64);memcpy(s->wire,"PMSH",4);s->wire[4]=1;memcpy(s->wire+8,"PMH1",4);s->wire[13]=s->wire[15]=1;
+  for(unsigned n=0;n<24;n++) assert(!image_publish(&images,s,n,1));
+  s->wire[18]=1;assert(!image_publish(&images,s,34,1)); /* triangle with no vertices */
+  s->wire[18]=0;assert(image_publish(&images,s,24,1));assert(s->mesh && s->length==16);image_release(&images,s->token);
   images.next_token = 0x1ffffffe; /* cross the sequence wrap */
   pthread_t thread; assert(!pthread_create(&thread, NULL, produce, NULL));
   for (uint32_t id = 1; id <= 4000; id++) {

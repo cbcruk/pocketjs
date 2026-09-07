@@ -42,3 +42,18 @@ export function createOffloadImageCollection<I>(runtime: ReturnType<typeof creat
     dispose: value => getOps().freeTexture?.(value.handle),
   });
 }
+
+/** Prepared geometry has the image lifecycle, but never consumes texture slots.
+ * One completion per frame covers the bounded native validation/copy. */
+export function createOffloadMeshCollection<I>(runtime: ReturnType<typeof createResourceRuntime>,
+  client: Pick<ReturnType<typeof createOffloadClient>, "requestMesh" | "cancel" | "uploadMesh" | "releaseMesh">,
+  options: Omit<ResourceCollectionOptions<I, string, TextureResource>, "load" | "materialize" | "dispose" | "releaseResponse" | "maxResponseBytes" | "cost" | "maxCost"> & {
+    method: string; payload(input: I): string;
+  }) {
+  // Fixed staging plus old/new native meshes (including aligned triangle records).
+  const cost=131088+2*(4096*4+2048*12+512);
+  return runtime.createCollection<I,string,TextureResource>({...options,maxResponseBytes:512,cost:()=>cost,maxCost:options.maxEntries*cost,
+    load:(input,complete)=>{const id=client.requestMesh(options.method,options.payload(input),complete);return id?{cancel:()=>client.cancel(id)}:false;},
+    materialize:raw=>client.uploadMesh(raw),releaseResponse:raw=>client.releaseMesh(raw),dispose:value=>getOps().freeMesh?.(value.handle),
+  });
+}
