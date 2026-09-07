@@ -17,7 +17,7 @@
 
 use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 
@@ -53,6 +53,19 @@ impl Waveform {
             _ => bail!("motion waveform must be DU or A2 (got {value:?})"),
         }
     }
+
+    /// Dense index, for keeping one measurement per waveform.
+    pub fn index(self) -> usize {
+        match self {
+            Self::Auto => 0,
+            Self::Du => 1,
+            Self::A2 => 2,
+            Self::Gc16 => 3,
+        }
+    }
+
+    /// Number of distinct waveforms, for sizing that table.
+    pub const COUNT: usize = 4;
 
     /// The name this waveform is selected by, so a bundle can say on screen
     /// which run it is looking at. Tuning ghosting means comparing two runs
@@ -260,6 +273,10 @@ const MXCFB_SEND_UPDATE_V1_NTX: libc::c_ulong = 0x4044_462E;
 /// by value rather than the later struct.
 #[cfg(target_os = "linux")]
 const MXCFB_WAIT_FOR_UPDATE_COMPLETE_V1: libc::c_ulong = 0x4004_462F;
+/// The same call declared the other direction, which some NTX kernels ship.
+const MXCFB_WAIT_FOR_UPDATE_COMPLETE_R: libc::c_ulong = 0x8004_462F;
+/// The v2 form: a struct holding the marker and a collision-test rect.
+const MXCFB_WAIT_FOR_UPDATE_COMPLETE_V2: libc::c_ulong = 0xC008_4635;
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
@@ -306,6 +323,8 @@ pub struct Epdc {
     file: File,
     marker: u32,
     pending: Option<u32>,
+    failed_waits: u64,
+    last_wait_errno: i32,
 }
 
 impl Epdc {
@@ -321,6 +340,8 @@ impl Epdc {
             file,
             marker: 0,
             pending: None,
+            failed_waits: 0,
+            last_wait_errno: 0,
         })
     }
 
@@ -387,6 +408,21 @@ impl Epdc {
     pub fn path(&self) -> &Path {
         &self.path
     }
+
+    /// Waits that the driver refused, since the session started.
+    ///
+    /// A wait that fails is indistinguishable from a panel that was already
+    /// finished — both return at once — so without this the difference
+    /// between "the update settled" and "the ioctl was rejected" is invisible.
+    pub fn failed_waits(&self) -> u64 {
+        self.failed_waits
+    }
+
+    /// errno from the most recent refused wait, or 0 if none has been refused.
+    /// EFAULT means the driver wanted a pointer where we passed a value.
+    pub fn last_wait_errno(&self) -> i32 {
+        self.last_wait_errno
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -413,23 +449,116 @@ impl Epdc {
     fn wait_for(&mut self, marker: u32) -> Result<()> {
         use std::os::fd::AsRawFd;
 
-        // SAFETY: the mx50 flavour takes the marker by value, not by pointer.
+        // The marker goes by pointer. Passing it by value is accepted by the
+        // compiler and rejected by the kernel with EINVAL, which is
+        // indistinguishable from a panel that had nothing left to do: both
+        // return instantly. This host ran that way for its whole life, with no
+        // back-pressure at all, asking a panel that needs 1030ms per full
+        // flash for one every 1.25s — until the EPDC stopped accepting
+        // updates. `--probe-epdc` is what settled it.
+        let mut marker = marker;
+        // SAFETY: the pointer is a live borrow of a u32 the ioctl reads.
         let result = unsafe {
             libc::ioctl(
                 self.file.as_raw_fd(),
                 MXCFB_WAIT_FOR_UPDATE_COMPLETE_V1 as _,
-                marker as libc::c_ulong,
+                &mut marker as *mut u32,
             )
         };
         if result < 0 {
             // A marker the driver has already retired is not an error worth
             // failing a shutdown over.
+            self.failed_waits += 1;
+            self.last_wait_errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
             log::debug!(
                 "kobo refresh: waiting for marker {marker} returned {}",
                 std::io::Error::last_os_error()
             );
         }
         Ok(())
+    }
+}
+
+/// One way of asking the driver to wait, and what it answered.
+pub struct WaitProbe {
+    pub name: &'static str,
+    pub request: libc::c_ulong,
+    pub errno: i32,
+    pub elapsed: Duration,
+}
+
+#[cfg(target_os = "linux")]
+impl Epdc {
+    /// Try each known encoding of MXCFB_WAIT_FOR_UPDATE_COMPLETE against a
+    /// real in-flight update, and report what each one said.
+    ///
+    /// The encoding differs between i.MX kernels and the NTX forks, and being
+    /// wrong is silent: a wait that is rejected returns as fast as one with
+    /// nothing to wait for, so the host runs with no back-pressure at all and
+    /// only finds out when the EPDC stops accepting updates. This device
+    /// answered EINVAL to the mainline encoding for every update of every
+    /// session before anyone counted.
+    pub fn probe_waits(&mut self, panel_w: usize, panel_h: usize) -> Result<Vec<WaitProbe>> {
+        use std::os::fd::AsRawFd;
+
+        let mut out = Vec::new();
+        let fd = self.file.as_raw_fd();
+        for (name, request) in [
+            ("_IOW('F',0x2F,u32) by value", MXCFB_WAIT_FOR_UPDATE_COMPLETE_V1),
+            ("_IOW('F',0x2F,u32) by pointer", MXCFB_WAIT_FOR_UPDATE_COMPLETE_V1),
+            ("_IOR('F',0x2F,u32) by pointer", MXCFB_WAIT_FOR_UPDATE_COMPLETE_R),
+            ("_IOWR('F',0x35,marker_data)", MXCFB_WAIT_FOR_UPDATE_COMPLETE_V2),
+        ] {
+            // A fresh full-panel update, so there is genuinely something in
+            // flight: waiting on a marker the driver already retired proves
+            // nothing about whether the wait works.
+            self.submit(RefreshRequest {
+                rect: Rect {
+                    x: 0,
+                    y: 0,
+                    w: panel_w,
+                    h: panel_h,
+                },
+                waveform: Waveform::Gc16,
+                flash: true,
+                kind: RefreshKind::Forced,
+            })?;
+            let marker = self.pending.take().unwrap_or(self.marker);
+            let by_pointer = name.contains("pointer");
+            let v2 = name.contains("0x35");
+            let started = Instant::now();
+            // SAFETY: each arm passes exactly what its comment describes, and
+            // both buffers outlive the call.
+            let result = unsafe {
+                if v2 {
+                    let mut data = [marker, 0u32];
+                    libc::ioctl(fd, request as _, data.as_mut_ptr())
+                } else if by_pointer {
+                    let mut value = marker;
+                    libc::ioctl(fd, request as _, &mut value as *mut u32)
+                } else {
+                    libc::ioctl(fd, request as _, marker as libc::c_ulong)
+                }
+            };
+            out.push(WaitProbe {
+                name,
+                request,
+                errno: if result < 0 {
+                    std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+                } else {
+                    0
+                },
+                elapsed: started.elapsed(),
+            });
+        }
+        Ok(out)
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+impl Epdc {
+    pub fn probe_waits(&mut self, _w: usize, _h: usize) -> Result<Vec<WaitProbe>> {
+        bail!("panel probing is only supported on Linux")
     }
 }
 

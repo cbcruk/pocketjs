@@ -238,7 +238,11 @@ while :; do
     else
         echo "pocketjs: restarting"
     fi
-    [ -f "$POCKETJS_LOG" ] && mv -f "$POCKETJS_LOG" "$POCKETJS_LOG.1"
+    # Append rather than rotate. Rotating here costs one generation per
+    # restart, and the generation it costs is the one holding the session that
+    # just wedged — which is how the log of the first freeze was lost, to the
+    # very next restart made to investigate it.
+    echo "--- restart $(date 2>/dev/null) ---" >>"$POCKETJS_LOG"
     # Which options this run is about to use, on the card before it runs them.
     # If it wedges, that line is the whole diagnosis.
     sync

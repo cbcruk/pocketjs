@@ -68,6 +68,7 @@ struct Args {
     power_helper: Option<PathBuf>,
     probe: bool,
     probe_touch: bool,
+    probe_epdc: bool,
     allow_active_gui: bool,
     profile_secs: u64,
 }
@@ -97,6 +98,7 @@ impl Args {
             ),
             probe: false,
             probe_touch: false,
+            probe_epdc: false,
             allow_active_gui: false,
             profile_secs: env_parse("POCKETJS_PROFILE_SECS")?.unwrap_or(0),
         };
@@ -145,6 +147,7 @@ impl Args {
                 "--no-power-key" => args.power_helper = None,
                 "--probe" => args.probe = true,
                 "--probe-touch" => args.probe_touch = true,
+                "--probe-epdc" => args.probe_epdc = true,
                 "--allow-active-gui" => args.allow_active_gui = true,
                 "-h" | "--help" => {
                     print_help();
@@ -202,6 +205,7 @@ Options:
   --no-power-key           ignore the power key entirely
   --probe                  report framebuffer geometry and exit
   --probe-touch            report live touch coordinates until interrupted
+  --probe-epdc             report which panel-wait ioctl this kernel has
   --allow-active-gui       explicit unsafe override of the nickel-pause guard
   --profile-secs N         log where each logic tick's time goes, every N s
                            (POCKETJS_PROFILE_SECS sets the same thing)
@@ -362,6 +366,20 @@ struct Profile {
     guest: Duration,
     raster: Duration,
     present: Duration,
+    /// One-off cost of learning each waveform's settle time.
+    flash_wait: Duration,
+    /// Updates handed to the panel.
+    submitted: u64,
+    /// Ticks whose update was held back while the panel was still working.
+    /// Against the tick count this is how busy the ink is; near the total
+    /// means the screen is asking for more than the panel can draw.
+    held: u64,
+    /// Running total of waits the driver refused, not a per-window count: a
+    /// wait that fails returns as fast as one that had nothing to wait for.
+    refused_waits: u64,
+    /// errno of the last refusal, so the reason is in the log rather than in
+    /// a guess about which flavour of the ioctl this kernel implements.
+    wait_errno: i32,
     /// Panel updates by kind. Which waveform an update actually used is the
     /// one thing a waveform experiment needs and the one thing the framebuffer
     /// cannot show: a probe whose content changes slower than MOTION_WINDOW
@@ -414,6 +432,13 @@ impl Profile {
             share(self.raster),
             per_tick(self.raster),
             share(self.present),
+        );
+        let report = format!(
+            "{report}, panel {} submitted / {} ticks held ({} refused errno {})",
+            self.submitted,
+            self.held,
+            self.refused_waits,
+            self.wait_errno,
         );
         let report = format!(
             "{report}; updates motion {} static {} quiet {} ghost {} forced {} initial {}",
@@ -628,6 +653,35 @@ fn main() -> Result<()> {
         return probe_touch(&mut input, &geometry);
     }
 
+    if args.probe_epdc {
+        let mut epdc = Epdc::new(&args.framebuffer)?;
+        println!(
+            "Waiting for a panel update is how a host learns the panel's real rate.\n\
+             Each line submits a full flash and then asks this kernel to wait for it.\n\
+             A wait that works takes as long as the panel does; 0ms with errno 0 means\n\
+             the driver had nothing to wait for, and any errno means it refused.\n"
+        );
+        for probe in epdc.probe_waits(geometry.panel_w, geometry.panel_h)? {
+            let verdict = match (probe.errno, probe.elapsed.as_millis()) {
+                (0, ms) if ms >= 50 => "waits",
+                (0, _) => "accepted but did not wait",
+                (errno, _) => match errno {
+                    22 => "refused: EINVAL, this kernel does not have it",
+                    14 => "refused: EFAULT, it wanted the other of value/pointer",
+                    _ => "refused",
+                },
+            };
+            println!(
+                "  0x{:08X}  {:<30} {:>5}ms  errno {:<3} — {verdict}",
+                probe.request,
+                probe.name,
+                probe.elapsed.as_millis(),
+                probe.errno,
+            );
+        }
+        return Ok(());
+    }
+
     let gui_paused = std::env::var("POCKETJS_GUI_PAUSED")
         .is_ok_and(|value| matches!(value.as_str(), "1" | "true" | "yes"));
     if !gui_paused && !args.allow_active_gui {
@@ -710,6 +764,24 @@ fn main() -> Result<()> {
     let mut pending = Vec::<Rect>::new();
     let mut first_frame = true;
     let mut force_refresh = false;
+    /// Consecutive refusals before the panel is called genuinely gone. One is
+    /// a hiccup the next update clears; a run of them is hardware that is not
+    /// coming back, and then handing the device to the Kobo UI is right.
+    const MAX_PANEL_ERRORS: u32 = 30;
+    let mut panel_errors: u32 = 0;
+    /// How long this panel needs to finish an update of each waveform,
+    /// learned from the first one of each rather than guessed: it varies with
+    /// waveform, area and temperature, and a constant compiled in here would
+    /// be wrong on the next panel.
+    ///
+    /// This is the host's only honest pacing signal. `--present-hz 30` says
+    /// what the loop may attempt, not what the ink can do: a full-width DU
+    /// update takes about a quarter second and a full flash about one, so a
+    /// host that believes the 30 submits ten times more work than the panel
+    /// retires. It has no way to notice, because the ioctl that would have
+    /// told it was being called wrong and failing instantly.
+    let mut settle: [Option<Duration>; Waveform::COUNT] = [None; Waveform::COUNT];
+    let mut panel_quiet_until: Option<Instant> = None;
     let mut power_pressed_at: Option<Instant> = None;
 
     while !terminate.load(Ordering::Relaxed) {
@@ -801,7 +873,14 @@ fn main() -> Result<()> {
                     .copied()
                     .map(|rect| geometry.render_rect_to_panel(rect))
                     .collect::<Vec<_>>();
-                if let Some(request) = refresh.on_damage(elapsed, &panel_damage, force_refresh) {
+                // Still inverting. Leave it alone and keep the damage; the
+                // next update covers everything that changed meanwhile.
+                let flashing_now = panel_quiet_until.is_some_and(|until| Instant::now() < until);
+                if flashing_now {
+                    runtime.profile.held += 1;
+                } else if let Some(request) =
+                    refresh.on_damage(elapsed, &panel_damage, force_refresh)
+                {
                     framebuffer.write_rects(
                         runtime.damage.current(),
                         geometry.render_w,
@@ -812,7 +891,71 @@ fn main() -> Result<()> {
                     pending.clear();
                     force_refresh = false;
                     runtime.profile.kinds.record(request.kind);
-                    fbink.submit(request)?;
+                    let waveform = request.waveform;
+                    // Not `?`. This driver answers EPERM with "Display HW not
+                    // properly initialized" when the EPDC re-initialises under
+                    // it, and treating that as fatal is how a transient panel
+                    // hiccup became a dead device three times: the host exits,
+                    // the launcher keeps its promise and restores nickel, and
+                    // nickel takes the panel and the radio with it. The next
+                    // update re-arms the controller, so the right answer is to
+                    // repaint and carry on — and to give up only if it never
+                    // comes back.
+                    match fbink.submit(request) {
+                        Ok(()) => panel_errors = 0,
+                        Err(error) => {
+                            panel_errors += 1;
+                            if panel_errors >= MAX_PANEL_ERRORS {
+                                return Err(error).context(format!(
+                                    "{MAX_PANEL_ERRORS} panel updates in a row were refused"
+                                ));
+                            }
+                            log::warn!(
+                                "kobo panel: update {panel_errors} refused ({error:#}); \
+                                 repainting everything and continuing"
+                            );
+                            force_refresh = true;
+                            continue;
+                        }
+                    }
+                    {
+                        // A full flash inverts the whole panel and owns the
+                        // EPDC for about a second — measured, not assumed, and
+                        // the reason the panel has to be left alone for it:
+                        // updates submitted behind one pile up in the driver
+                        // until the EPDC re-initialises and starts answering
+                        // EPERM.
+                        //
+                        // Blocking here would be correct and would also halve
+                        // the guest's clock, since a second is thirty logic
+                        // ticks. So block exactly once, to learn how long this
+                        // panel takes, and afterwards just stop submitting for
+                        // that long. The guest keeps its rate, damage keeps
+                        // accumulating, and the first update after the flash
+                        // carries all of it.
+                        let slot = &mut settle[waveform.index()];
+                        match *slot {
+                            None => {
+                                let settling = Instant::now();
+                                fbink.finish()?;
+                                let measured = settling.elapsed();
+                                *slot = Some(measured);
+                                log::info!(
+                                    "kobo panel: {} settles in {}ms; holding updates \
+                                     for that long after each one",
+                                    waveform.name(),
+                                    measured.as_millis()
+                                );
+                                runtime.profile.flash_wait += measured;
+                            }
+                            Some(measured) => {
+                                panel_quiet_until = Some(Instant::now() + measured)
+                            }
+                        }
+                        runtime.profile.submitted += 1;
+                        runtime.profile.refused_waits = fbink.failed_waits();
+                        runtime.profile.wait_errno = fbink.last_wait_errno();
+                    }
                 }
             } else if let Some(request) = refresh.on_idle(elapsed) {
                 runtime.profile.kinds.record(request.kind);
