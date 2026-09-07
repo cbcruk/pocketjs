@@ -31,12 +31,42 @@ Launcher. Assets are embedded; there is no separate asset folder to install.
 | X | Sit / stand; use the bench when within reach |
 | Y | Open the 3DS software keyboard and send text |
 | L / R | Previous / next facial expression |
+| L + R + SELECT | Open / close the native performance panel |
 | Lower screen | Send quick phrases, select expressions, wave, sit or cheer |
 
 **This build has one local visitor.** Sending text adds a local conversation
 entry and a seven-second bubble attached to Mira's animated head. It does not
 connect to a server, transmit voice, or represent another player's avatar.
 The UI identifies the room and delivery as local.
+
+## Measure on a console
+
+**`L + R + SELECT` opens a performance panel on the lower screen.** It uses
+the same shortcut as Pocket Runtime, but is owned by this native host. This
+example does not link Pocket Runtime's development server or package inspector.
+`B` closes the panel, `X` saves the measurements, and `START` saves and exits
+to Homebrew Launcher. Circle Pad movement continues while the panel is open.
+
+Measurements run with the panel closed. Walk, run, sit and send a message for
+at least 30 seconds, then press `START`. Open ftpd and retrieve
+**`sdmc:/pocket-island/perf.csv`**. The next save replaces that report.
+The report contains the last 180 completed sampling windows and records the
+build revision, console model query and capture-build flag. A capture build
+cannot establish console performance; use `dist/island/release/` on hardware.
+
+The host measures submitted frame intervals with `svcGetSystemTick`, including
+GPU and vertical-blank waiting. Each window of at least one second reports
+FPS, mean / p95 / maximum frame time, update plus CPU skinning, vertex upload,
+3D plus UI submission, frame-end cache flushing, wait time, triangle count and
+simulation ticks per rendered frame. The fixed **30 Hz simulation rate is
+independent of measured FPS**. `C3D_GetDrawingTime` is sampled after the previous
+GPU queue completes; that overlapping queue duration must not be added to CPU
+stage times. Panel visibility is recorded per window because replacing the
+conversation UI changes rendering cost.
+
+Samples remain in a bounded RAM buffer during gameplay. SD writes occur on
+`X` in the panel or on exit. Keyboard and export pauses reset the partial
+sampling window. A forced shutdown loses unsaved samples.
 
 ## Character source
 
@@ -125,13 +155,16 @@ delivery transitions and bubble expiry. The desktop Pocket3D tests protect the
 existing model and renderer contracts after extraction of the sampler.
 
 The macOS Azahar test boots a capture build with isolated config and SD data,
-simulates every turn of the movement and touch tape, renders the ten selected
+simulates every turn of the movement and touch tape, renders the eleven selected
 poses, checks state receipts, and saves paired
 upper/lower **PICA render-target readbacks** to `dist/island/e2e/latest`.
 It defaults to the software rasterizer because this installed Azahar version's
 Vulkan path produced striped RGB8 readbacks. Each run launches its own immutable ROM copy. It does not use the developer's SD
 card or terminate unrelated emulator processes. The native keyboard return path was also observed in an interactive emulator
-run; text entry on the physical console is a separate check.
+run; text entry on the physical console is a separate check. The capture also
+checks the performance shortcut's open / hold / close behavior, release latch
+and SD report export. The native C statistics test checks measured FPS,
+stalls, percentile calculation and bounded history.
 
 A successful emulator run proves the native build and scripted interactions.
 Physical-console frame time, keyboard entry, Circle Pad feel and Homebrew

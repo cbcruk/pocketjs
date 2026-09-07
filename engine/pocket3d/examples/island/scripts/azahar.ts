@@ -42,9 +42,12 @@ try {
     await Bun.sleep(500);
   }
   const receipts = readFileSync(`${captures}/receipt.jsonl`, "utf8").trim().split("\n").map(line => JSON.parse(line));
-  if (receipts.length !== 10) throw new Error("Missing capture receipts");
+  if (receipts.length !== 11) throw new Error("Missing capture receipts");
   const at = (frame: number) => receipts.find(r => r.frame === frame);
   if (at(31).x < 0.5 || at(61).action !== 2 || at(91).action !== 6 || at(121).messages !== 1 || at(181).action !== 4 || at(241).action !== 0 || at(301).expression !== 5) throw new Error(`Interaction receipt mismatch: ${JSON.stringify(receipts)}`);
+  if (at(331).perf_panel !== 1) throw new Error("Performance chord did not open the native panel");
+  const perf = readFileSync(`${captures}/perf.csv`, "utf8");
+  if (!perf.includes("capture=1") || !perf.includes("update_skin_ms") || !perf.includes("gpu_previous_ms")) throw new Error("Missing performance export provenance or columns");
   mkdirSync(`${out}/latest`, { recursive: true });
   for (const r of receipts) for (const [name, width] of [["top", 400], ["bottom", 320]] as const) {
     const bytes = readFileSync(`${captures}/${name}-${String(r.frame).padStart(3, "0")}.bgr`);
@@ -57,7 +60,8 @@ try {
     writeFileSync(`${out}/latest/${name}-${String(r.frame).padStart(3, "0")}.png`, encodePNG(rgba, width, 240));
   }
   writeFileSync(`${out}/latest/receipt.json`, JSON.stringify({ fixture, renderer: process.env.ISLAND_GRAPHICS_API ?? "0", frames: receipts }, null, 2));
-  console.log(`PASS: 10 paired GPU captures; movement, run, wave, sit, stand, expressions and chat. ${out}/latest`);
+  writeFileSync(`${out}/latest/perf.csv`, perf);
+  console.log(`PASS: 11 paired GPU captures; movement, run, wave, sit, stand, expressions, chat and performance panel/export. ${out}/latest`);
 } finally {
   for (const pid of ownedPids()) { try { process.kill(pid, "SIGKILL"); } catch {} }
 }

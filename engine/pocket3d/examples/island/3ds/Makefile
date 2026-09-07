@@ -7,6 +7,8 @@ SOURCE := /repo/engine/pocket3d/examples/island/3ds
 BUILD := /repo/dist/island/$(FLAVOR)
 RUST := /repo/engine/pocket3d/examples/island/3ds/core/target/armv6k-nintendo-3ds/release/libpocket_island_3ds.a
 CFLAGS := $(ARCH) -O2 -Wall -Wextra -std=gnu11 -mword-relocations -ffunction-sections -fdata-sections -D__3DS__ -I$(DEVKITPRO)/libctru/include -I$(BACKEND) -I$(SOURCE) -I$(BUILD)
+BUILD_ID ?= unknown
+CFLAGS += -DISLAND_BUILD_ID=\"$(BUILD_ID)\"
 ifeq ($(FLAVOR),capture)
 CFLAGS += -DISLAND_CAPTURE
 endif
@@ -20,7 +22,7 @@ $(BUILD)/color_shbin.s $(BUILD)/color_shbin.h &: $(BUILD)/color.shbin
 	cd $(BUILD) && $(DEVKITPRO)/tools/bin/bin2s -a 4 -H color_shbin.h color.shbin > color_shbin.s
 $(BUILD)/color_shbin.o: $(BUILD)/color_shbin.s
 	$(CC) $(ARCH) -c $< -o $@
-$(BUILD)/main.o: $(SOURCE)/main.c $(SOURCE)/island.h $(BACKEND)/pocket3d.h $(BUILD)/color_shbin.h
+$(BUILD)/main.o: $(SOURCE)/main.c $(SOURCE)/island.h $(SOURCE)/perf.h $(BACKEND)/pocket3d.h $(BUILD)/color_shbin.h FORCE
 	$(CC) $(CFLAGS) -c $< -o $@
 $(BUILD)/pocket3d.o: $(BACKEND)/pocket3d.c $(BACKEND)/pocket3d.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -30,4 +32,5 @@ $(BUILD)/pocket-island.smdh: /repo/hosts/3ds/icon.png | $(BUILD)
 	$(DEVKITPRO)/tools/bin/smdhtool --create 'Pocket Island' 'Mira - a little island, together' 'PocketJS' $< $@ /repo/hosts/3ds/icon-small.png
 $(BUILD)/pocket-island.3dsx: $(BUILD)/pocket-island.elf $(BUILD)/pocket-island.smdh
 	$(DEVKITPRO)/tools/bin/3dsxtool $< $@ --smdh=$(BUILD)/pocket-island.smdh
-.PHONY: all
+.PHONY: all FORCE
+FORCE:

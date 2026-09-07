@@ -1,6 +1,7 @@
 #include "color_shbin.h"
 #include "island.h"
 #include "pocket3d.h"
+#include "perf.h"
 #include <3ds.h>
 #include <citro2d.h>
 #include <math.h>
@@ -13,6 +14,64 @@ static C2D_TextBuf textbuf;
 static Island *island;
 static IslandSnapshot state;
 static P3D_Mesh terrain, avatar[2];
+#ifndef ISLAND_BUILD_ID
+#define ISLAND_BUILD_ID "unknown"
+#endif
+static PerfStats perf;
+static bool perf_visible, perf_input_latched, new_3ds;
+static u64 perf_previous_end;
+static char perf_notice[64] = "Recording in RAM. X saves to SD.";
+static float elapsed_ms(u64 start, u64 end) {
+  return (end - start) / CPU_TICKS_PER_MSEC;
+}
+static void perf_pause(void) {
+  perf_previous_end = 0;
+  perf_reset_window(&perf);
+}
+static void perf_save(void) {
+  mkdir("sdmc:/pocket-island", 0777);
+  FILE *f = fopen("sdmc:/pocket-island/perf.csv", "w");
+  if (!f) {
+    snprintf(perf_notice, sizeof perf_notice, "SD save failed. X retries.");
+    return;
+  }
+  fprintf(f, "# pocket-island-perf-v1 build=%s new_3ds=%u capture=%u\n",
+          ISLAND_BUILD_ID, new_3ds,
+#ifdef ISLAND_CAPTURE
+          1u
+#else
+          0u
+#endif
+  );
+  fputs("elapsed_ms,frames,fps,frame_ms,p95_ms,max_ms,update_skin_ms,upload_ms,draw_ui_ms,end_ms,wait_ms,gpu_previous_ms,steps_per_frame,avatar_vertices,terrain_vertices,action,panel\n", f);
+  for (unsigned i = 0; i < perf.count; i++) {
+    const PerfRow *r = &perf.history[(perf.head + PERF_HISTORY - perf.count + i) % PERF_HISTORY];
+    fprintf(f, "%.3f,%u,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%u,%u,%u,%u\n",
+            r->elapsed_ms, (unsigned)r->frames, r->fps, r->frame_ms, r->p95_ms,
+            r->max_ms, r->stage[PERF_UPDATE], r->stage[PERF_UPLOAD],
+            r->stage[PERF_DRAW_UI], r->stage[PERF_END], r->stage[PERF_WAIT],
+            r->stage[PERF_GPU], r->steps, (unsigned)r->avatar_vertices,
+            (unsigned)r->terrain_vertices, (unsigned)r->action, (unsigned)r->panel);
+  }
+  bool ok = !ferror(f);
+  if (fclose(f)) ok = false;
+  snprintf(perf_notice, sizeof perf_notice, "%s",
+           ok ? "Saved /pocket-island/perf.csv" : "SD write failed. X retries.");
+}
+static void perf_menu_input(u32 down, u32 held) {
+  const u32 menu_keys = KEY_L | KEY_R | KEY_SELECT;
+  if ((held & menu_keys) == menu_keys && (down & menu_keys)) {
+    perf_visible = !perf_visible;
+    perf_input_latched = true;
+    perf_pause();
+  }
+  if (perf_visible && (down & KEY_B)) {
+    perf_visible = false;
+    perf_input_latched = true;
+    perf_pause();
+  }
+  if (perf_input_latched && held == 0) perf_input_latched = false;
+}
 static int tab = 0;
 static const char *expressions[] = {"Calm",  "Happy", "Sad",   "Wow!",
                                     "Angry", "Shy",   "Sleepy"};
@@ -109,6 +168,7 @@ static void keyboard(void) {
   swkbdSetButton(&keyboard, SWKBD_BUTTON_RIGHT, "Say", true);
   if (swkbdInputText(&keyboard, output, sizeof output) == SWKBD_BUTTON_RIGHT)
     send_text(output);
+  perf_pause();
 }
 static void top_ui(void) {
   C2D_Prepare();
@@ -143,12 +203,44 @@ static void top_ui(void) {
   text(18, 214, .36, muted, actions[state.action]);
   text(268, 217, .34, ink, "Circle Pad + B to run");
 }
+static void perf_ui(void) {
+  char row[96];
+  const PerfRow *p = &perf.latest;
+  rect(0, 0, 320, 240, paper);
+  text(14, 8, .66, ink, "POCKET ISLAND / PERF");
+#ifdef ISLAND_CAPTURE
+  snprintf(row, sizeof row, "CAPTURE BUILD / not gameplay timing");
+#else
+  snprintf(row, sizeof row, "%s  /  %s", ISLAND_BUILD_ID, new_3ds ? "New 3DS" : "3DS");
+#endif
+  text(15, 32, .36, muted, row);
+  snprintf(row, sizeof row, "%.1f FPS    %.1f ms / frame", p->fps, p->frame_ms);
+  text(15, 53, .63, mint, row);
+  snprintf(row, sizeof row, "p95 %.1f ms    max %.1f ms", p->p95_ms, p->max_ms);
+  text(15, 80, .43, ink, row);
+  const char *labels[] = {"Update + skin", "Vertex upload", "3D + UI submit",
+                          "Frame end / flush", "GPU + vblank wait", "GPU queue (previous)"};
+  for (int i = 0; i < PERF_STAGES; i++) {
+    text(15, 104 + i * 13, .36, muted, labels[i]);
+    snprintf(row, sizeof row, "%7.2f ms", p->stage[i]);
+    text(216, 104 + i * 13, .36, ink, row);
+  }
+  snprintf(row, sizeof row, "%u tris / %.1f ticks per frame / %u samples",
+           (unsigned)((p->avatar_vertices + p->terrain_vertices) / 3), p->steps, perf.count);
+  text(15, 186, .33, muted, row);
+  text(15, 203, .34, accent, perf_notice);
+  text(15, 221, .34, ink, "X save   B close   START save + exit");
+}
 static void bottom_ui(void) {
   C2D_Prepare();
   C2D_SceneBegin(bottom);
   C3D_DepthTest(false, GPU_ALWAYS, GPU_WRITE_COLOR);
   C3D_AlphaBlend(GPU_BLEND_ADD, GPU_BLEND_ADD, GPU_SRC_ALPHA,
                  GPU_ONE_MINUS_SRC_ALPHA, GPU_ONE, GPU_ONE_MINUS_SRC_ALPHA);
+  if (perf_visible) {
+    perf_ui();
+    return;
+  }
   rect(0, 0, 320, 240, paper);
   text(15, 9, .72, ink, "A little island, together.");
   text(16, 34, .37, muted, "MIRA  /  1 visitor  /  local demo");
@@ -226,7 +318,7 @@ static uint8_t *capture;
 static bool capture_frame(unsigned frame) {
   return frame == 1 || frame == 31 || frame == 61 || frame == 91 ||
          frame == 121 || frame == 151 || frame == 181 || frame == 211 ||
-         frame == 241 || frame == 301;
+         frame == 241 || frame == 301 || frame == 331;
 }
 static bool dump(C3D_RenderTarget *target, unsigned width, unsigned frame,
                  const char *name) {
@@ -247,6 +339,7 @@ static bool dump(C3D_RenderTarget *target, unsigned width, unsigned frame,
 #endif
 int main(void) {
   gfxInitDefault();
+  APT_CheckNew3DS(&new_3ds);
   gfxSet3D(false);
   if (!C3D_Init(C3D_DEFAULT_CMDBUF_SIZE * 2) || !C2D_Init(4096))
     return 1;
@@ -289,6 +382,14 @@ int main(void) {
     u32 down = hidKeysDown(), held = hidKeysHeld();
     if (down & KEY_START)
       break;
+    perf_menu_input(down, held);
+    if (perf_visible && (down & KEY_X)) {
+      perf_save();
+      perf_pause();
+      last = osGetTime();
+    }
+    bool menu_input = perf_visible || perf_input_latched;
+    if (menu_input) pending_actions = 0;
     circlePosition pad;
     hidCircleRead(&pad);
     float x = pad.dx / 156.f, z = -pad.dy / 156.f;
@@ -302,16 +403,17 @@ int main(void) {
       z = 1;
     uint32_t flags = (held & KEY_B ? 1 : 0) | (down & KEY_A ? 2 : 0) |
                      (down & KEY_X ? 4 : 0);
+    if (menu_input) flags = 0;
     island_snapshot(island, &state);
-    if (down & KEY_R)
+    if (!menu_input && (down & KEY_R))
       island_expression(island, (state.expression + 1) % 7);
-    if (down & KEY_L)
+    if (!menu_input && (down & KEY_L))
       island_expression(island, (state.expression + 6) % 7);
-    if (down & KEY_Y) {
+    if (!menu_input && (down & KEY_Y)) {
       keyboard();
       last = osGetTime();
     }
-    if (down & KEY_TOUCH) {
+    if (!menu_input && (down & KEY_TOUCH)) {
       touchPosition p;
       hidTouchRead(&p);
       flags |= touch_action(p);
@@ -348,16 +450,34 @@ int main(void) {
       touch_action((touchPosition){.px = 220, .py = 65});
       touch_action((touchPosition){.px = 100, .py = 139});
     }
+    if (frame == 330) {
+      // Exercise the same chord/hold/close input path as the native host.
+      const u32 chord = KEY_L | KEY_R | KEY_SELECT;
+      perf_menu_input(KEY_SELECT, chord);
+      if (!perf_visible || !perf_input_latched) break;
+      perf_menu_input(0, chord);
+      if (!perf_visible) break;
+      perf_menu_input(KEY_B, KEY_B);
+      if (perf_visible || !perf_input_latched) break;
+      perf_menu_input(0, 0);
+      if (perf_input_latched) break;
+      perf_menu_input(KEY_SELECT, chord);
+    }
 #endif
     // Inputs are edge commands; consume once even if catch-up needs two turns.
+    float timing[PERF_STAGES] = {0};
+    u64 stage_start = svcGetSystemTick();
+    unsigned steps = 0;
     pending_actions |= flags & ~1u;
     while (accumulator >= 1. / 30.) {
       island_step(island, x, z, (flags & 1) | pending_actions);
+      steps++;
       pending_actions = 0;
       accumulator -= 1. / 30.;
     }
     island_snapshot(island, &state);
     v = island_vertices(island, false, &n);
+    timing[PERF_UPDATE] = elapsed_ms(stage_start, svcGetSystemTick());
 #ifdef ISLAND_CAPTURE
     // Every logical turn is simulated; only selected poses submit a GPU frame.
     // Readback tests need pixel receipts, not real-time video playback.
@@ -367,10 +487,18 @@ int main(void) {
     }
 #endif
     // FrameBegin waits for the preceding GPU submission before slot reuse.
+    stage_start = svcGetSystemTick();
     if (!C3D_FrameBegin(C3D_FRAME_SYNCDRAW))
       continue;
+    timing[PERF_WAIT] = elapsed_ms(stage_start, svcGetSystemTick());
+    // Read only after FrameBegin retires the previous GPU queue. This is
+    // overlapping GPU work, not another component of the CPU frame total.
+    timing[PERF_GPU] = C3D_GetDrawingTime();
+    stage_start = svcGetSystemTick();
     if (!p3d_mesh_upload(&avatar[frame % 2], v, n))
       break;
+    timing[PERF_UPLOAD] = elapsed_ms(stage_start, svcGetSystemTick());
+    stage_start = svcGetSystemTick();
     C2D_TextBufClear(textbuf);
     C3D_RenderTargetClear(top, C3D_CLEAR_ALL, 0x83cbcaff, 0);
     C3D_RenderTargetClear(bottom, C3D_CLEAR_ALL, 0xfffae8ff, 0);
@@ -388,7 +516,15 @@ int main(void) {
     top_ui();
     bottom_ui();
     C2D_Flush();
+    timing[PERF_DRAW_UI] = elapsed_ms(stage_start, svcGetSystemTick());
+    stage_start = svcGetSystemTick();
     C3D_FrameEnd(0);
+    u64 end = svcGetSystemTick();
+    timing[PERF_END] = elapsed_ms(stage_start, end);
+    if (perf_previous_end)
+      perf_record(&perf, elapsed_ms(perf_previous_end, end), timing, frame > 0,
+                  steps, n, terrain.count, state.action, perf_visible);
+    perf_previous_end = end;
     frame++;
 #ifdef ISLAND_CAPTURE
     if (capture_frame(frame)) {
@@ -397,13 +533,14 @@ int main(void) {
         break;
       fprintf(receipt,
               "{\"frame\":%u,\"tick\":%u,\"x\":%.4f,\"z\":%.4f,\"action\":%u,"
-              "\"expression\":%u,\"messages\":%u,\"vertices\":%u}\n",
+              "\"expression\":%u,\"messages\":%u,\"vertices\":%u,\"perf_panel\":%u}\n",
               frame, (unsigned)state.tick, state.x, state.z,
               (unsigned)state.action, (unsigned)state.expression,
-              (unsigned)state.messages, (unsigned)n);
+              (unsigned)state.messages, (unsigned)n, perf_visible);
       fflush(receipt);
     }
-    if (frame == 301) {
+    if (frame == 331) {
+      perf_save();
       fclose(receipt);
       receipt = NULL;
       FILE *f = fopen("sdmc:/pocket-island/done", "wb");
@@ -415,6 +552,11 @@ int main(void) {
     }
 #endif
   }
+#ifndef ISLAND_CAPTURE
+  // Export only on an explicit save/exit, so SD latency cannot lower the
+  // recorded gameplay FPS. The panel need not be open to collect samples.
+  perf_save();
+#endif
 #ifdef ISLAND_CAPTURE
   if (receipt)
     fclose(receipt);
