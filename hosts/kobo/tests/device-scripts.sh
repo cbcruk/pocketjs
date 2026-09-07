@@ -209,6 +209,21 @@ check "the UI is never stopped when the launch fails early" "running" \
     "$(cat "$NICKEL_STATE")"
 contains "a boot with no terminal still leaves a log" "launcher starting" \
     "$POCKETJS_BOOT_LOG"
+
+rm -f "$POCKETJS_BOOT_LOG"
+POCKETJS_STDOUT=/dev/console launch >/dev/null 2>&1
+contains "a boot on the console still leaves a log" "launcher starting" \
+    "$POCKETJS_BOOT_LOG"
+
+# The one that bites. init gives rcS the console, which is a tty, so `[ -t 1 ]`
+# read a boot as "someone is watching" and wrote no log on exactly the run
+# whose output nobody could see. A pty is the only terminal that means anyone
+# is; this check fails if the rule goes back to asking whether fd 1 is a tty.
+rm -f "$POCKETJS_BOOT_LOG"
+POCKETJS_STDOUT=/dev/pts/3 launch >/dev/null 2>&1
+check "a session on a pty is left to print" "0" \
+    "$([ -f "$POCKETJS_BOOT_LOG" ] && echo 1 || echo 0)"
+
 mv "$WORK/pak.hidden" "$APP/app.pak"
 
 echo

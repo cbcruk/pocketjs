@@ -40,8 +40,18 @@ fi
 # Booted from rcS this script's own output goes to the console and is lost, so
 # the one time it matters — a boot that did not work — there is nothing to
 # read. Keep it next to the host's log. Interactive runs still print.
+#
+# `[ -t 1 ]` cannot make that distinction here: init hands rcS the console,
+# which is a tty, so a boot run looked interactive and wrote no log at all.
+# What actually separates the two is which terminal — a session that can read
+# the output arrives over telnet on a pty; anything else has nobody watching.
 POCKETJS_BOOT_LOG="${POCKETJS_BOOT_LOG:-$POCKETJS_DIR/launcher.log}"
-if [ ! -t 1 ]; then
+POCKETJS_STDOUT="${POCKETJS_STDOUT:-$(readlink /proc/self/fd/1 2>/dev/null)}"
+case "$POCKETJS_STDOUT" in
+    /dev/pts/*) POCKETJS_WATCHED=1 ;;
+    *) POCKETJS_WATCHED=0 ;;
+esac
+if [ "$POCKETJS_WATCHED" = 0 ]; then
     [ -f "$POCKETJS_BOOT_LOG" ] && mv -f "$POCKETJS_BOOT_LOG" "$POCKETJS_BOOT_LOG.1"
     exec >>"$POCKETJS_BOOT_LOG" 2>&1
 fi
@@ -112,6 +122,11 @@ if [ -e "$POCKETJS_DIR/REMOTE" ]; then
         mkdir -p /dev/pts
         mount -t devpts devpts /dev/pts 2>/dev/null ||
             echo "pocketjs: could not mount devpts" >&2
+    fi
+    # The multiplexer is the other half of a pty pair. udev makes it when it
+    # runs; /dev is a tmpfs built fresh each boot, so do not assume it did.
+    if [ ! -e /dev/ptmx ]; then
+        mknod /dev/ptmx c 5 2 && chmod 666 /dev/ptmx
     fi
 
     if pidof telnetd >/dev/null 2>&1; then
