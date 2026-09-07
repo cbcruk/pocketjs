@@ -421,6 +421,21 @@ impl AppRuntime {
             .eval("sim-hz", &format!("globalThis.__simHz = {sim_hz};"))
             .context("publishing the simulation rate")?;
         publish_boot_clock(&guest)?;
+        // Same slot again: which panel policy this run is using. A bundle can
+        // then label itself, which is the difference between comparing two
+        // waveforms and guessing which one is on screen.
+        guest
+            .eval(
+                "ink-policy",
+                &format!(
+                    "globalThis.__inkPolicy = {{ motionWaveform: {:?}, \
+                     ghostBudget: {}, presentHz: {} }};",
+                    args.motion_waveform.name(),
+                    args.ghost_budget,
+                    args.present_hz
+                ),
+            )
+            .context("publishing the ink policy")?;
         guest.eval("app", &js).context("evaluating app bundle")?;
         if !guest.has_frame() {
             bail!(

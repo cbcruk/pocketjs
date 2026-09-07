@@ -53,6 +53,18 @@ impl Waveform {
             _ => bail!("motion waveform must be DU or A2 (got {value:?})"),
         }
     }
+
+    /// The name this waveform is selected by, so a bundle can say on screen
+    /// which run it is looking at. Tuning ghosting means comparing two runs
+    /// by eye, and an unlabelled screenshot is worth nothing an hour later.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Auto => "AUTO",
+            Self::Du => "DU",
+            Self::A2 => "A2",
+            Self::Gc16 => "GC16",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
