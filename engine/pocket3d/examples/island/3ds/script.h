@@ -7,7 +7,7 @@
 
 #define ISLAND_SCRIPT_LIMIT 8192
 typedef struct {
-  float span, eye_height, distance, target_height;
+  float span, eye_height, distance, target_height, yaw, tilt;
 } IslandCamera;
 typedef struct {
   JSRuntime *runtime;

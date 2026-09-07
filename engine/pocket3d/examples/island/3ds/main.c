@@ -4,6 +4,7 @@
 #include "pocket3d.h"
 #include "perf.h"
 #include "devlink.h"
+#include "view.h"
 #include <3ds.h>
 #include <citro2d.h>
 #include <math.h>
@@ -20,6 +21,8 @@ static P3D_SkinMesh avatar;
 static Island *replicas[ISLAND_MAX_ACTORS];
 static unsigned benchmark_generation, benchmark_tick;
 static const IslandBenchmark *benchmark;
+static IslandOrbit orbit;
+static IslandView camera_view;
 #ifndef ISLAND_BUILD_ID
 #define ISLAND_BUILD_ID "unknown"
 #endif
@@ -201,13 +204,9 @@ static void top_ui(void) {
   // A readable ground shadow roots the avatar in the 3D scene.
   char message[193];
   if (!benchmark->enabled && island_bubble(island, (uint8_t *)message, sizeof message)) {
-    const IslandCamera *camera = &island_dev_script()->camera;
-    const float pixels = 400.f / camera->span;
-    const float rise = camera->eye_height - camera->target_height;
-    const float distance = sqrtf(rise * rise + camera->distance * camera->distance);
-    float x = 200 + (state.anchor_x - state.cam_x) * pixels;
-    float y = 120 - ((state.anchor_y - camera->target_height) * camera->distance -
-                     (state.anchor_z - state.cam_z) * rise) / distance * pixels;
+    float x, y;
+    island_view_project(&camera_view, state.anchor_x - state.cam_x, state.anchor_y,
+                        state.anchor_z - state.cam_z, &x, &y);
     bool right = x <= 200;
     // The head anchor is above the hair. Keep a 36 px side gap and a short
     // 9 px tail instead of extending a triangle down to the face centre.
@@ -315,6 +314,7 @@ static void bottom_ui(void) {
     rect(0, 33, 320, 17, paper);
     text(16, 34, .34, muted, notice);
   }
+  if (new_3ds) text(17, 231, .26, muted, "C-stick: look around    ZL + ZR: reset view");
 }
 static uint32_t touch_action(touchPosition p) {
   if (p.py >= 56 && p.py < 83) {
@@ -493,6 +493,19 @@ int main(void) {
       perf_pause();
       last = osGetTime();
     }
+    // libctru's hidScanInput also scans New 3DS IRRST input.
+    circlePosition stick = {0};
+    hidCstickRead(&stick);
+    if (!menu_input) {
+      const u32 reset_keys = KEY_ZL | KEY_ZR;
+      island_orbit_update(&orbit, stick.dx / 156.f, stick.dy / 156.f,
+                          (osGetTime() - last) / 1000.f,
+                          (held & reset_keys) == reset_keys);
+    }
+    const IslandCamera *camera = &island_dev_script()->camera;
+    camera_view = island_view_make(camera->span, camera->eye_height, camera->distance,
+        camera->target_height, camera->yaw + (benchmark->enabled ? 0 : orbit.yaw),
+        camera->tilt + (benchmark->enabled ? 0 : orbit.tilt));
     circlePosition pad;
     hidCircleRead(&pad);
     float x = pad.dx / 156.f, z = -pad.dy / 156.f;
@@ -509,6 +522,7 @@ int main(void) {
     if (!menu_input && (down & KEY_A)) flags |= script_action("wave", 0, NULL);
     if (!menu_input && (down & KEY_X)) flags |= script_action("sit", 0, NULL);
     island_dev_input(&x, &z, &flags);
+    island_view_move(&camera_view, &x, &z);
     IslandCommand remote_command;
     if (island_dev_command(&remote_command)) flags |= apply_command(&remote_command);
     island_snapshot(island, &state);
@@ -633,12 +647,12 @@ int main(void) {
     C3D_RenderTargetClear(bottom, C3D_CLEAR_ALL, 0xfffae8ff, 0);
     C3D_FrameDrawOn(top);
     C3D_Mtx projection, view, vp;
-    const IslandCamera *camera = &island_dev_script()->camera;
-    const float view_half_width = camera->span * .5f, view_half_height = camera->span * .3f;
+    const float view_half_width = camera_view.span * .5f, view_half_height = camera_view.span * .3f;
     Mtx_OrthoTilt(&projection, -view_half_width, view_half_width,
                   -view_half_height, view_half_height, .1, 100, false);
-    C3D_FVec eye = FVec3_New(state.cam_x, camera->eye_height, state.cam_z + camera->distance),
-             target = FVec3_New(state.cam_x, camera->target_height, state.cam_z),
+    C3D_FVec eye = FVec3_New(state.cam_x + camera_view.sin_yaw * camera_view.distance,
+                            camera_view.eye_height, state.cam_z + camera_view.cos_yaw * camera_view.distance),
+             target = FVec3_New(state.cam_x, camera_view.target_height, state.cam_z),
              up = FVec3_New(0, 1, 0);
     Mtx_LookAt(&view, eye, target, up, false);
     Mtx_Multiply(&vp, &projection, &view);

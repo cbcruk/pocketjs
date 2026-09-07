@@ -75,12 +75,24 @@ def register(o, name, material, bone=None, world=False):
     return o
 
 
-def ell(name, loc, scale, material, bone=None, world=False, seg=8, rings=6):
+def ell(name, loc, scale, material, bone=None, world=False, seg=8, rings=4):
     bpy.ops.mesh.primitive_uv_sphere_add(segments=seg, ring_count=rings, location=loc)
     o = bpy.context.object
     o.scale = scale
     bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
     return register(o, name, material, bone, world)
+
+
+def face_disc(name, loc, scale, material, bone, seg=8):
+    # Convex face marks need a rim and a raised center, not a closed sphere.
+    verts = [(loc[0], loc[1] - scale[1], loc[2])]
+    verts += [(loc[0] + scale[0] * math.cos(i * math.tau / seg), loc[1],
+               loc[2] + scale[2] * math.sin(i * math.tau / seg)) for i in range(seg)]
+    me = bpy.data.meshes.new(name)
+    me.from_pydata(verts, [], [(0, i + 1, (i + 1) % seg + 1) for i in range(seg)])
+    o = bpy.data.objects.new(name, me)
+    bpy.context.collection.objects.link(o)
+    return register(o, name, material, bone)
 
 
 def disc(name, loc, scale, material, seg=12):
@@ -108,7 +120,11 @@ def cube(name, loc, scale, material, bone=None, world=False, bevel=0):
         md.segments = 1
         bpy.context.view_layer.objects.active = o
         bpy.ops.object.modifier_apply(modifier=md.name)
-    return register(o, name, material, bone, world)
+    register(o, name, material, bone, world)
+    if world:
+        for p in o.data.polygons:
+            p.use_smooth = False
+    return o
 
 
 def cone(name, loc, r1, r2, depth, material, bone=None, world=False, verts=12):
@@ -123,7 +139,7 @@ def line(name, pts, r, material, bone=None, world=False):
     cv.dimensions = "3D"
     cv.resolution_u = 2
     cv.bevel_depth = r
-    cv.bevel_resolution = 1
+    cv.bevel_resolution = 0
     s = cv.splines.new("POLY")
     s.points.add(len(pts) - 1)
     for p, v in zip(s.points, pts):
@@ -163,7 +179,7 @@ for exp in ["neutral", "happy", "sad", "surprised", "angry", "shy", "sleepy"]:
 bone("blink", (0, 0, 1.4), "head")
 # Body, stitched pinafore, blouse collar, shoes and hands.
 ell("blouse", (0, 0, 0.96), (0.25, 0.135, 0.215), cream, "chest")
-cone("pinafore skirt", (0, 0, 0.665), 0.285, 0.195, 0.32, dress, "hips", verts=16)
+cone("pinafore skirt", (0, 0, 0.665), 0.285, 0.195, 0.32, dress, "hips", verts=12)
 ell("pinafore bib", (0, -0.132, 0.92), (0.158, 0.024, 0.135), dress, "chest")
 for sg, side in [(1, "L"), (-1, "R")]:
     cube(
@@ -181,7 +197,7 @@ for sg, side in [(1, "L"), (-1, "R")]:
         hem,
         "chest",
         seg=8,
-        rings=6,
+        rings=3,
     )
     ell(
         "peter pan collar " + side,
@@ -225,7 +241,7 @@ for sg, side in [(1, "L"), (-1, "R")]:
         skin,
         "hand." + side,
         seg=8,
-        rings=6,
+        rings=4,
     )
     ell(
         "leg " + side,
@@ -275,19 +291,19 @@ for sg in [-1, 1]:
         leaf,
         "chest",
         seg=8,
-        rings=6,
+        rings=3,
     )
 # Oversized head, ears, sculpted nose and cheeks.
-ell("face", (0, -0.008, 1.435), (0.327, 0.273, 0.333), skin, "head", seg=24, rings=16)
+ell("face", (0, -0.008, 1.435), (0.327, 0.273, 0.333), skin, "head", seg=20, rings=12)
 for sg in [-1, 1]:
     ell("ear", (sg * 0.317, 0.005, 1.401), (0.059, 0.042, 0.075), skin, "head")
-    ell("cheek", (sg * 0.207, -0.217, 1.332), (0.053, 0.008, 0.026), blush, "head")
+    face_disc("cheek", (sg * 0.207, -0.217, 1.332), (0.053, 0.008, 0.026), blush, "head")
 ell("button nose", (0, -0.285, 1.369), (0.024, 0.030, 0.027), skin, "head")
 # A sculpted cap with a forehead opening; back hangs to the shoulders.
 verts = []
 faces = []
-N = 32
-R = 9
+N = 24
+R = 6
 for j in range(R + 1):
     t = j / R
     for i in range(N):
@@ -314,8 +330,8 @@ register(o, "parted crown", hair, "head")
 # Back hair: a shell, open on the face side, with a scalloped shoulder line.
 verts = []
 faces = []
-N = 20
-R = 6
+N = 16
+R = 4
 for j in range(R + 1):
     t = j / R
     for i in range(N + 1):
@@ -384,8 +400,8 @@ line(
 # Expressions authored as mesh layers, skin-bound, visible through bone scale.
 def smile(name, exp, down=False, width=0.062, z=1.29):
     pts = []
-    for k in range(9):
-        x = -width + 2 * width * k / 8
+    for k in range(5):
+        x = -width + 2 * width * k / 4
         zz = z + (0.028 if down else -0.025) * (1 - (x / width) ** 2)
         pts.append((x, -0.258, zz))
     line(name, pts, 0.007, dark, "face." + exp)
@@ -398,28 +414,27 @@ for exp in ["neutral", "happy", "sad", "surprised", "angry", "shy", "sleepy"]:
         if exp in ["happy", "sleepy"]:
             pts = [
                 (
-                    x - 0.049 + k * 0.098 / 8,
+                    x - 0.049 + k * 0.098 / 4,
                     -0.266,
                     1.415
-                    + (0.028 if exp == "happy" else -0.014) * math.sin(k * math.pi / 8),
+                    + (0.028 if exp == "happy" else -0.014) * math.sin(k * math.pi / 4),
                 )
-                for k in range(9)
+                for k in range(5)
             ]
             line("closed eye " + exp, pts, 0.011, dark, bn)
         else:
             sz = 0.055 if exp == "surprised" else (0.039 if exp == "shy" else 0.049)
-            ell(
+            face_disc(
                 "eye white " + exp, (x, -0.262, 1.425), (0.057, 0.014, 0.071), cream, bn
             )
-            ell("iris " + exp, (x, -0.279, 1.425), (0.038, 0.009, sz), dark, bn)
-            ell(
+            face_disc("iris " + exp, (x, -0.279, 1.425), (0.038, 0.009, sz), dark, bn)
+            face_disc(
                 "eye glint " + exp,
                 (x - 0.012, -0.289, 1.448),
                 (0.012, 0.004, 0.016),
                 white,
                 bn,
                 seg=8,
-                rings=6,
             )
         by = 1.516
         slope = sg * (0.032 if exp == "angry" else (-0.031 if exp == "sad" else 0.005))
@@ -431,10 +446,10 @@ for exp in ["neutral", "happy", "sad", "surprised", "angry", "shy", "sleepy"]:
             bn,
         )
     if exp == "surprised":
-        ell("o mouth", (0, -0.265, 1.286), (0.026, 0.01, 0.037), dark, bn)
+        face_disc("o mouth", (0, -0.265, 1.286), (0.026, 0.01, 0.037), dark, bn)
     elif exp == "happy":
-        ell("happy mouth", (0, -0.261, 1.283), (0.055, 0.008, 0.033), dark, bn)
-        ell("happy tongue", (0, -0.271, 1.27), (0.035, 0.004, 0.012), blush, bn)
+        face_disc("happy mouth", (0, -0.261, 1.283), (0.055, 0.008, 0.033), dark, bn)
+        face_disc("happy tongue", (0, -0.271, 1.27), (0.035, 0.004, 0.012), blush, bn)
     else:
         smile(
             "mouth " + exp,
@@ -660,8 +675,20 @@ for name, z, rx, ry, ma in [
     ("grass bank", -0.015, 9.25, 7.25, edge),
     ("meadow", 0.045, 9.15, 7.15, grass),
 ]:
-    o = cone(name, (0, 0, z), 1, 1, 0.12, ma, world=True, verts=64)
-    o.scale = (rx, ry, 1)
+    # Upper fan plus the visible bank; submerged undersides are omitted.
+    count = 48 if rx < 20 else 8
+    top = z + 0.06
+    vs = [(0, 0, top)]
+    vs += [(rx * math.cos(i * math.tau / count), ry * math.sin(i * math.tau / count), top) for i in range(count)]
+    vs += [(vx, vy, top - 0.12) for vx, vy, _ in vs[1:]]
+    fs = [(0, i + 1, (i + 1) % count + 1) for i in range(count)]
+    fs += [(i + 1, i + 1 + count, (i + 1) % count + 1 + count, (i + 1) % count + 1) for i in range(count)]
+    me = bpy.data.meshes.new(name)
+    me.from_pydata(vs, [], fs)
+    o = bpy.data.objects.new(name, me)
+    bpy.context.collection.objects.link(o)
+    register(o, name, ma, world=True)
+    for poly in me.polygons: poly.use_smooth = False
 # Meandering flat path tiles.
 for i in range(18):
     y = -5.1 + i * 0.56
@@ -686,7 +713,7 @@ COLLIDERS = []
 
 
 def tree(x, y, s=1):
-    cone("pear trunk", (x, y, 0.68 * s), 0.16 * s, 0.10 * s, 1.3 * s, trunk, world=True)
+    cone("pear trunk", (x, y, 0.68 * s), 0.16 * s, 0.10 * s, 1.3 * s, trunk, world=True, verts=8)
     for dx, dy, dz, sz, ma in [
         (-0.35, 0, 1.65, 0.67, foliage),
         (0.36, 0.04, 1.71, 0.72, foliage),
@@ -698,8 +725,8 @@ def tree(x, y, s=1):
             (sz * s, sz * 0.88 * s, sz * 0.83 * s),
             ma,
             world=True,
-            seg=10,
-            rings=6,
+            seg=8,
+            rings=4,
         )
     for a in [0.2, 2.4, 4.4]:
         ell(
@@ -708,8 +735,8 @@ def tree(x, y, s=1):
             (0.115 * s,) * 3,
             fruit,
             world=True,
-            seg=8,
-            rings=4,
+            seg=6,
+            rings=3,
         )
     COLLIDERS.append((x, -y, 0.38 * s))
 
@@ -724,69 +751,71 @@ for x, y, s in [
     (2.8, 5.4, 0.83),
 ]:
     tree(x, y, s)
-# Cottage at rear of plaza, front faces camera (negative Blender Y).
+# A solid cottage with a thick roof, recessed panes and connected porch.
 x, y = -2.9, 3.1
-cube("cottage", (x, y, 0.93), (2.5, 1.9, 1.78), wall, world=True, bevel=0.09)
-# Gabled triangular roof as editable mesh.
-vs = [
-    (x + dx, y + dy, z)
-    for dy in [-1.12, 1.12]
-    for dx, z in [(-1.45, 1.75), (0, 2.65), (1.45, 1.75)]
-]
-me = bpy.data.meshes.new("gable")
-me.from_pydata(vs, [], [(0, 1, 2), (5, 4, 3), (0, 3, 4, 1), (1, 4, 5, 2), (2, 5, 3, 0)])
-o = bpy.data.objects.new("gable roof", me)
+cottage_start = len(WORLD)
+cube("cottage foundation", (x, y, 0.17), (2.64, 2.22, 0.25), stone, world=True)
+cube("cottage", (x, y, 1.01), (2.5, 2.1, 1.7), wall, world=True)
+# Plaster gable fills the roof, while two slabs provide separate eaves.
+vs = [(x + dx, y + dy, z) for dy in [-1.05, 1.05]
+      for dx, z in [(-1.25, 1.85), (0, 2.66), (1.25, 1.85)]]
+me = bpy.data.meshes.new("plaster gable")
+me.from_pydata(vs, [], [(2, 1, 0), (3, 4, 5), (1, 4, 3, 0), (2, 5, 4, 1)])
+o = bpy.data.objects.new("plaster gable", me)
 bpy.context.collection.objects.link(o)
-register(o, "gable roof", roof, world=True)
-cube("door", (x, y - 0.967, 0.57), (0.55, 0.045, 1.10), teal, world=True, bevel=0.07)
-ell("door knob", (x + 0.18, y - 1.01, 0.58), (0.027, 0.022, 0.027), dress, world=True)
+register(o, "plaster gable", wall, world=True)
+for poly in me.polygons: poly.use_smooth = False
 for sg in [-1, 1]:
-    cube(
-        "window frame",
-        (x + sg * 0.82, y - 0.98, 1.14),
-        (0.58, 0.05, 0.60),
-        cream,
-        world=True,
-        bevel=0.04,
-    )
-    cube(
-        "window glass",
-        (x + sg * 0.82, y - 1.015, 1.14),
-        (0.45, 0.02, 0.47),
-        glass,
-        world=True,
-    )
-    cube(
-        "window mullion",
-        (x + sg * 0.82, y - 1.03, 1.14),
-        (0.035, 0.02, 0.48),
-        cream,
-        world=True,
-    )
-    cube(
-        "window crossbar",
-        (x + sg * 0.82, y - 1.035, 1.14),
-        (0.46, 0.02, 0.032),
-        cream,
-        world=True,
-    )
-    cube(
-        "flower box",
-        (x + sg * 0.82, y - 1.10, 0.85),
-        (0.62, 0.22, 0.16),
-        wood,
-        world=True,
-        bevel=0.025,
-    )
-cube(
-    "chimney",
-    (x - 0.8, y + 0.24, 2.43),
-    (0.32, 0.37, 0.87),
-    wall,
-    world=True,
-    bevel=0.03,
-)
-COLLIDERS.extend([(x - 0.72, -y, 1.15), (x + 0.72, -y, 1.15)])
+    vs = [(x + dx, y + dy, height - thickness)
+          for thickness in [0, 0.11] for dy in [-1.31, 1.23]
+          for dx, height in [(0, 2.77), (sg * 1.52, 1.82)]]
+    me = bpy.data.meshes.new("thick roof slab")
+    faces = [(0, 1, 3, 2), (4, 6, 7, 5), (0, 4, 5, 1),
+             (2, 3, 7, 6), (0, 2, 6, 4), (1, 5, 7, 3)]
+    me.from_pydata(vs, [], faces if sg > 0 else [tuple(reversed(f)) for f in faces])
+    o = bpy.data.objects.new("thick roof slab", me)
+    bpy.context.collection.objects.link(o)
+    register(o, "thick roof slab", roof, world=True)
+    for poly in me.polygons: poly.use_smooth = False
+    # Fascia boards visibly meet at the roof ridge.
+    start, end = Vector((x, y - 1.32, 2.72)), Vector((x + sg * 1.52, y - 1.32, 1.77))
+    beam = cube("front roof fascia", (start + end) / 2, (0.075, 0.11, (end-start).length), cream, world=True)
+    beam.rotation_euler = (end-start).to_track_quat("Z", "Y").to_euler()
+cube("roof ridge", (x, y - 0.04, 2.79), (0.15, 2.67, 0.12), roof, world=True)
+cube("door reveal", (x, y - 1.061, 0.76), (0.70, 0.05, 1.24), wood, world=True)
+cube("door", (x, y - 1.102, 0.74), (0.53, 0.04, 1.13), teal, world=True)
+for dx in [-0.325, 0.325]:
+    cube("door jamb", (x + dx, y - 1.17, 0.77), (0.085, 0.15, 1.30), cream, world=True)
+cube("door lintel", (x, y - 1.17, 1.39), (0.74, 0.15, 0.10), cream, world=True)
+ell("door knob", (x + 0.16, y - 1.14, 0.72), (0.027, 0.022, 0.027), dress, world=True, seg=6, rings=3)
+for sg in [-1, 1]:
+    wx = x + sg * 0.83
+    cube("window reveal", (wx, y - 1.071, 1.12), (0.61, 0.06, 0.66), wood, world=True)
+    cube("window glass", (wx, y - 1.11, 1.12), (0.46, 0.024, 0.50), glass, world=True)
+    for dx in [-0.27, 0.27]:
+        cube("window jamb", (wx + dx, y - 1.17, 1.12), (0.075, 0.15, 0.65), cream, world=True)
+    for dz in [-0.29, 0.29]:
+        cube("window lintel", (wx, y - 1.17, 1.12 + dz), (0.61, 0.15, 0.075), cream, world=True)
+    cube("window mullion", (wx, y - 1.14, 1.12), (0.025, 0.03, 0.51), cream, world=True)
+    cube("window crossbar", (wx, y - 1.14, 1.12), (0.47, 0.03, 0.025), cream, world=True)
+    cube("flower box", (wx, y - 1.23, 0.77), (0.63, 0.28, 0.16), wood, world=True)
+    cube("flower box foliage", (wx, y - 1.23, 0.87), (0.55, 0.21, 0.075), foliage, world=True)
+# A side window and stone base reveal the building's depth when orbiting.
+cube("side window surround", (x + 1.275, y + 0.10, 1.10), (0.065, 0.64, 0.69), cream, world=True)
+cube("side window glass", (x + 1.32, y + 0.10, 1.10), (0.03, 0.49, 0.54), glass, world=True)
+cube("side window bar", (x + 1.345, y + 0.10, 1.10), (0.03, 0.035, 0.56), cream, world=True)
+cube("doorstep lower", (x, y - 1.47, 0.14), (1.08, 0.65, 0.12), stone, world=True)
+cube("doorstep upper", (x, y - 1.32, 0.23), (0.94, 0.40, 0.12), cream, world=True)
+cube("porch canopy", (x, y - 1.30, 1.64), (0.95, 0.64, 0.11), roof, world=True)
+for dx in [-0.43, 0.43]:
+    cube("porch post", (x + dx, y - 1.53, 0.95), (0.065, 0.065, 1.28), wood, world=True)
+cube("chimney", (x - 0.8, y + 0.24, 2.43), (0.32, 0.37, 0.87), wall, world=True)
+cube("chimney cap", (x - 0.8, y + 0.24, 2.9), (0.43, 0.48, 0.10), wood, world=True)
+# Turn the cottage so the default orthographic view exposes its side wall.
+angle = math.radians(-12)
+turn = Matrix.Translation((x, y, 0)) @ Matrix.Rotation(angle, 4, "Z") @ Matrix.Translation((-x, -y, 0))
+for o in WORLD[cottage_start:]: o.matrix_world = turn @ o.matrix_world
+COLLIDERS.extend([(x + sg * 0.72 * math.cos(angle), -y - sg * 0.72 * math.sin(angle), 1.2) for sg in [-1, 1]])
 # Bench on east side of plaza, exact sitting anchor exported with scene layout.
 BENCH = (3.05, -0.55, 0.38)
 for dy in [-0.14, 0, 0.14]:
@@ -796,7 +825,7 @@ for dy in [-0.14, 0, 0.14]:
         (1.5, 0.115, 0.09),
         wood,
         world=True,
-        bevel=0.025,
+        bevel=0,
     )
 for z in [0.78, 1.00]:
     cube(
@@ -805,11 +834,13 @@ for z in [0.78, 1.00]:
         (1.52, 0.075, 0.14),
         wood,
         world=True,
-        bevel=0.025,
+        bevel=0,
     )
 for xx in [2.47, 3.63]:
     for yy in [0.44, 0.72]:
         cube("bench leg", (xx, yy, 0.24), (0.09, 0.09, 0.43), teal, world=True)
+    cube("bench back upright", (xx, 0.80, 0.57), (0.095, 0.095, 1.06), teal, world=True)
+    cube("bench side rail", (xx, 0.62, 0.37), (0.11, 0.47, 0.10), teal, world=True)
 COLLIDERS.append((3.05, -0.55, 0.85))
 # Dock and small rope bollards at front beach.
 for i in range(12):
@@ -819,11 +850,11 @@ for i in range(12):
         (1.7, 0.21, 0.12),
         wood,
         world=True,
-        bevel=0.02,
+        bevel=0,
     )
 for xx in [-0.7, 0.9]:
     for yy in [-6.85, -8.9]:
-        cone("dock post", (xx, yy, 0.24), 0.07, 0.07, 0.62, wood, world=True)
+        cone("dock post", (xx, yy, 0.24), 0.07, 0.07, 0.62, wood, world=True, verts=8)
 # Flowers, meadow tufts, stepping stones and water glints.
 for i in range(35):
     a = random.random() * math.tau
@@ -840,14 +871,14 @@ for i in range(35):
             (x + 0.075 * math.cos(ang), y + 0.075 * math.sin(ang), 0.36),
             (0.057, 0.057, 0.028),
             pink if i % 3 else cream,
-            seg=6,
+            seg=4,
         )
     disc(
         "flower heart",
         (x, y, 0.382),
         (0.036, 0.036, 0.024),
         dress,
-        seg=8,
+        seg=6,
     )
 for i in range(28):
     a = i * math.tau / 28
@@ -870,8 +901,8 @@ for xx, yy in [(-7, -3.6), (7, 3.5), (-3.5, -5.4)]:
         (0.47, 0.35, 0.30),
         stone,
         world=True,
-        seg=10,
-        rings=6,
+        seg=8,
+        rings=4,
     )
     COLLIDERS.append((xx, -yy, 0.42))
 # Export portable profile: bind-space colored triangles + the actual bone TRS.
@@ -914,15 +945,22 @@ def export_p3m(path, objects, animated):
         me = o.data
         me.calc_loop_triangles()
         ma = o.data.materials[0].diffuse_color[:3]
-        base = len(verts)
         joint = names.index(OWN.get(o.name, "head")) if animated else 0
         normal = (C @ o.matrix_world).to_3x3().inverted().transposed()
-        for v in me.vertices:
-            p = C @ o.matrix_world @ v.co
-            n = (normal @ v.normal).normalized()
-            verts.append((*p, *n, *ma, joint))
+        # Hard architectural edges need split normals, while smooth character
+        # surfaces retain shared vertices. Respect the authored polygon shading.
+        lookup = {}
         for tri in me.loop_triangles:
-            indices.extend(base + i for i in tri.vertices)
+            poly = me.polygons[tri.polygon_index]
+            for i in tri.vertices:
+                v = me.vertices[i]
+                n = (normal @ (v.normal if poly.use_smooth else poly.normal)).normalized()
+                key = (i, *n)
+                if key not in lookup:
+                    lookup[key] = len(verts)
+                    p = C @ o.matrix_world @ v.co
+                    verts.append((*p, *n, *ma, joint))
+                indices.append(lookup[key])
     with open(path, "wb") as f:
         f.write(b"P3M1")
         f.write(

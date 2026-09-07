@@ -28,7 +28,9 @@ Launcher. Assets are embedded; there is no separate asset folder to install.
 | --- | --- |
 | Circle Pad / D-pad | Walk on the upper screen |
 | Hold B | Run |
-| A | Wave toward the camera |
+| C-stick (New 3DS) | Orbit horizontally; raise or lower the view |
+| ZL + ZR | Reset the C-stick view offset |
+| A | Wave toward the island front |
 | X | Sit / stand; use the bench when within reach |
 | Y | Open the 3DS software keyboard and send text |
 | L / R | Previous / next facial expression |
@@ -160,12 +162,14 @@ by the stride authored with each clip. Partial Circle Pad input reduces cadence;
 a blocked avatar returns to idle. Walk/run switches retain gait phase. The
 Blender generator solves the two leg joints from a planted-foot segment and a
 short swing arc, and exports the stride with the assets. Tests verify stance
-foot drift and height within **1.2 cm** at two movement speeds for both clips.
+foot drift and height within **1.2 cm** at 0.5, 1.95 and 3.65 units/s for both clips.
+Full-stick walking is **1.95 units/s** and running is **3.65 units/s**, up from
+1.45 and 2.65. The faster displacement uses the same authored strides.
 
 The host requests **New 3DS CPU speedup**, matching the PocketJS host. Old 3DS
 keeps its supported clock. **The PICA200 skins and lights the character's
 vertices.** Rust samples and interpolates the 29-node skeleton, then C uploads
-the 3-by-4 affine matrices as shader uniforms. The 4,671 unique vertices and
+the 3-by-4 affine matrices as shader uniforms. The 2,200 unique vertices and
 16-bit indices are uploaded once and shared by all actors. Hidden expression
 ranges are omitted without rebuilding the index buffer; the shadow mesh is
 also shared. Material color roots are computed when the resident mesh is
@@ -176,15 +180,29 @@ The existing `updateSkinMs` field now measures CPU update and pose evaluation;
 `uploadMs` measures draw preparation. Matrix uniform submission is included in
 `drawUiMs`. **Dynamic vertex upload bytes per frame are zero.** GPU queue time
 includes the shader's skinning and lighting work and overlaps CPU work.
-The island mesh has **9,010 triangles**, down from 24,608. The character asset
-has **8,496 triangles across all face layers**, down from 13,152; inactive
-layers are omitted from submission. Flat paths and flower petals use triangle
-fans, while face and hair silhouettes retain their subdivisions.
+The island mesh has **5,244 triangles**, down from 9,010 in the preceding
+GPU build. The character asset has **3,516 triangles across all face layers**,
+down from 8,496; inactive layers are omitted from submission. A neutral avatar
+submits **2,868 triangles plus a 32-triangle shadow**. Two neutral avatars and
+the island submit **11,044 triangles**, down from 19,682. Eyes and cheeks use
+convex discs; paths, petals and island tops use triangle fans. Head, hair and
+tree subdivisions are reduced, and submerged bottom faces are omitted.
+
+The cottage has roof slabs with thickness, eaves, door and window reveals,
+porch posts, steps and a side window. It turns 12 degrees to expose the side
+wall in the initial view. Bench uprights join the back boards to the ground
+and side rails. Hard architectural edges use split polygon normals in P3M;
+smooth character surfaces share their vertices.
 
 The upper camera spans **7.2 world units** across 400 pixels, placing the
 standing character at about 90 pixels tall. Its lower viewing angle exposes
 more of the face. Camera following extends to the shore, and speech-bubble
-projection uses the same camera parameters as the 3D view.
+projection uses the same camera basis as the 3D view. **C-stick orbit rotates
+movement into screen coordinates** and clamps elevation between 20 and 50
+degrees. `ZL + ZR` resets its offset. Optional `camera.yaw` and `camera.tilt`
+values in `app.js` set a base orientation in radians; missing fields default
+to zero. Load tests suspend the manual offset and restore it after the case.
+Orbit changes view matrices without rebuilding or uploading scene geometry.
 
 Samples remain in a bounded RAM buffer during gameplay. SD writes occur on
 `X` in the panel or on exit. Keyboard, script replacement and screenshot

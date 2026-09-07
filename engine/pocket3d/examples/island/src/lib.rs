@@ -18,6 +18,8 @@ mod layout {
     include!("../assets/layout.rs");
 }
 pub const STEP: f32 = 1.0 / 30.0;
+pub const WALK_SPEED: f32 = 1.95;
+pub const RUN_SPEED: f32 = 3.65;
 pub const MAX_MESSAGE_BYTES: usize = 192;
 pub const HISTORY_LIMIT: usize = 32;
 pub const BUBBLE_TICKS: u64 = 210;
@@ -454,7 +456,7 @@ impl Island {
             Action::SitDown | Action::SitIdle | Action::StandUp
         ) {
             if moving {
-                let step = dir * (if input.run { 2.65 } else { 1.45 }) * STEP;
+                let step = dir * (if input.run { RUN_SPEED } else { WALK_SPEED }) * STEP;
                 let previous = self.position;
                 let next = self.position + step;
                 if Self::walkable(next.x, self.position.z) {
@@ -827,7 +829,7 @@ mod tests {
             (Action::Walk, layout::WALK_STRIDE, 0.55),
             (Action::Run, layout::RUN_STRIDE, 0.34),
         ] {
-            for speed in [0.5, 2.65] {
+            for speed in [0.5, WALK_SPEED, RUN_SPEED] {
                 let mut s = Island::new();
                 s.change(action);
                 s.blend = 1.;
@@ -1014,7 +1016,7 @@ mod tests {
                 ..Input::default()
             });
         }
-        assert!((s.position.x - start.x - 2.65).abs() < 0.001);
+        assert!((s.position.x - start.x - RUN_SPEED).abs() < 0.001);
         for _ in 0..600 {
             s.step(Input {
                 x: 1.,

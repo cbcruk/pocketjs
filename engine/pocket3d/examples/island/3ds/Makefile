@@ -46,7 +46,7 @@ $(BUILD)/dev_protocol.o: $(HOST)/src/dev_protocol.c $(HOST)/src/dev_protocol.h |
 	$(CC) $(CFLAGS) -c $< -o $@
 $(BUILD)/soc.o: $(HOST)/src/soc.c $(HOST)/src/soc.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
-$(BUILD)/main.o: $(SOURCE)/main.c $(SOURCE)/island.h $(SOURCE)/perf.h $(SOURCE)/devlink.h $(BACKEND)/pocket3d.h $(BUILD)/color_shbin.h $(BUILD)/skin_shbin.h FORCE
+$(BUILD)/main.o: $(SOURCE)/main.c $(SOURCE)/island.h $(SOURCE)/perf.h $(SOURCE)/view.h $(SOURCE)/devlink.h $(BACKEND)/pocket3d.h $(BUILD)/color_shbin.h $(BUILD)/skin_shbin.h FORCE
 	$(CC) $(CFLAGS) -c $< -o $@
 $(BUILD)/pocket3d.o: $(BACKEND)/pocket3d.c $(BACKEND)/pocket3d.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@

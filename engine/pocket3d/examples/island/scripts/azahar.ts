@@ -68,16 +68,22 @@ try {
       await client.sendFrame(POCKET_RUNTIME_MSG.packageBegin, encodePocketRuntimePackageBegin(100, 123n));
       await packageVerdict;
       const original = readFileSync(`${root}/engine/pocket3d/examples/island/app.js`, "utf8");
-      const changed = original.replace("A little island, together.", "Linked without FTP.").replace("span: 7.2", "span: 7.8");
+      const changed = original.replace("A little island, together.", "Linked without FTP.").replace("span: 7.2", "span: 7.8")
+        .replace("yaw: 0", "yaw: 0.65").replace("tilt: 0", "tilt: 0.1");
       const reload = await request("island.reload", { source: changed });
       if (reload.ok !== true) throw new Error(`Valid reload rejected: ${JSON.stringify(reload)}`);
       const after = await request("island.stats", {}, "island.stats");
       if (Math.abs(Number(after.cameraSpan) - 7.8) > 0.001) throw new Error("Live camera edit was not applied");
+      if (Math.abs(Number(after.cameraYaw) - .65) > .001 || Math.abs(Number(after.cameraTilt) - .1) > .001) throw new Error("Live orbit was not applied");
       if (after.title !== "Linked without FTP." || Number(after.tick) < Number(initial.tick) || after.x !== initial.x || after.z !== initial.z) throw new Error("JS hot replacement reset native state or retained old UI");
       const rejected = await request("island.reload", { source: "globalThis.islandApp = {" });
       if (rejected.ok !== false || rejected.scriptHash !== reload.scriptHash) throw new Error("Invalid replacement discarded the running script");
       const badCamera = await request("island.reload", { source: original.replace("span: 7.2", "span: -1") });
       if (badCamera.ok !== false || badCamera.scriptHash !== reload.scriptHash) throw new Error("Invalid camera discarded the running script");
+      for (const [field, value] of [["yaw", 4], ["tilt", 1]] as const) {
+        const badOrbit = await request("island.reload", { source: original.replace(`${field}: 0`, `${field}: ${value}`) });
+        if (badOrbit.ok !== false || badOrbit.scriptHash !== reload.scriptHash) throw new Error(`Invalid ${field} discarded the running script`);
+      }
       const loop = await request("island.reload", { source: "while(true) {}" });
       if (loop.ok !== false || loop.scriptHash !== reload.scriptHash) throw new Error("Unbounded script was accepted");
       await request("island.event", { event: "message", text: "Live TCP message" });
@@ -88,10 +94,21 @@ try {
       await client.sendCtrl({ t: "island.input", id: tapeId, x: 1, z: 0, frames: 15, flags: 1 });
       const motion = await moved;
       if (Number(motion.x) <= Number(chat.x)) throw new Error("Remote input did not move the character");
+      const dx = Number(motion.x) - Number(chat.x), dz = Number(motion.z) - Number(chat.z);
+      if (dz >= 0 || Math.abs(dz / dx + Math.tan(.65)) > .02) throw new Error("Movement did not follow the rotated screen basis");
       const shot = client.waitForScreenshot(90000);
       await client.sendCtrl({ t: "screenshot" });
       const screenshot = await shot;
       writeFileSync(`${fixture}/live-screen.png`, screenshot.png);
+      await Bun.sleep(8000); // Let the bubble expire before the building/bench review.
+      for (const yaw of [-.45, .45]) {
+        const wide = await request("island.reload", { source: original.replace("span: 7.2", "span: 16").replace("targetHeight: 0.8", "targetHeight: 1.8").replace("yaw: 0", `yaw: ${yaw}`).replace("tilt: 0", "tilt: 0.2") });
+        if (wide.ok !== true) throw new Error("Wide orbit rejected");
+        await Bun.sleep(300);
+        const wideShot = client.waitForScreenshot(90000);
+        await client.sendCtrl({ t: "screenshot" });
+        writeFileSync(`${fixture}/orbit-${yaw < 0 ? "left" : "right"}.png`, (await wideShot).png);
+      }
       const restored = await request("island.reload", { source: original });
       if (restored.ok !== true || restored.scriptHash !== initial.scriptHash) throw new Error("Original script restoration failed");
       const restoredState = await request("island.stats", {}, "island.stats");

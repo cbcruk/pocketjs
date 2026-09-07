@@ -206,6 +206,8 @@ static void stats(const PerfStats *p, const IslandSnapshot *s, unsigned frame, c
   number(obj, "cameraEyeHeight", active->camera.eye_height);
   number(obj, "cameraDistance", active->camera.distance);
   number(obj, "cameraTargetHeight", active->camera.target_height);
+  number(obj, "cameraYaw", active->camera.yaw);
+  number(obj, "cameraTilt", active->camera.tilt);
   string(obj, "title", active->title);
   char hash[17];
   snprintf(hash, sizeof hash, "%016llx", (unsigned long long)active->hash);

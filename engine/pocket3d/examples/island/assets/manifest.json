@@ -6,8 +6,8 @@
   "blender": "5.1.2",
   "profile": "P3M1 rigid skin, linear TRS, vertex color",
   "character_asset": {
-    "vertices": 4671,
-    "triangles": 8496,
+    "vertices": 2200,
+    "triangles": 3516,
     "bones": 29,
     "clips": [
       "Idle",
@@ -29,14 +29,14 @@
       "Expression_shy",
       "Expression_sleepy"
     ],
-    "bytes": 712277
+    "bytes": 558619
   },
   "island_asset": {
-    "vertices": 6102,
-    "triangles": 9010,
+    "vertices": 5908,
+    "triangles": 5244,
     "bones": 1,
     "clips": [],
-    "bytes": 340070
+    "bytes": 287506
   },
   "expressions": [
     "neutral",

@@ -43,6 +43,13 @@ static bool camera_number(JSContext *ctx, JSValueConst obj, const char *key,
   JS_FreeValue(ctx, v);
   return ok;
 }
+static bool camera_optional(JSContext *ctx, JSValueConst obj, const char *key,
+                             float *out, double low, double high) {
+  JSValue v = JS_GetPropertyStr(ctx, obj, key);
+  bool absent = JS_IsUndefined(v);
+  JS_FreeValue(ctx, v);
+  return absent || camera_number(ctx, obj, key, out, low, high);
+}
 uint64_t island_script_hash(const char *source, size_t length) {
   uint64_t h = UINT64_C(14695981039346656037);
   for (size_t i = 0; i < length; i++) h = (h ^ (unsigned char)source[i]) * UINT64_C(1099511628211);
@@ -140,14 +147,16 @@ bool island_script_prepare(IslandScript *s, const char *source, size_t length,
   JS_FreeValue(s->context, phrases);
   // Older v1 scripts retain the close view; explicit camera edits validate
   // in the candidate context before the host replaces the active script.
-  s->camera = (IslandCamera){7.2f, 6.6f, 10.f, .8f};
+  s->camera = (IslandCamera){7.2f, 6.6f, 10.f, .8f, 0, 0};
   JSValue camera = JS_GetPropertyStr(s->context, s->app, "camera");
   if (!JS_IsUndefined(camera)) {
     ok = ok && JS_IsObject(camera) &&
       camera_number(s->context, camera, "span", &s->camera.span, 5, 16) &&
       camera_number(s->context, camera, "eyeHeight", &s->camera.eye_height, 3, 14) &&
       camera_number(s->context, camera, "distance", &s->camera.distance, 6, 20) &&
-      camera_number(s->context, camera, "targetHeight", &s->camera.target_height, .4, 1.8);
+      camera_number(s->context, camera, "targetHeight", &s->camera.target_height, .4, 1.8) &&
+      camera_optional(s->context, camera, "yaw", &s->camera.yaw, -3.141593, 3.141593) &&
+      camera_optional(s->context, camera, "tilt", &s->camera.tilt, -.3, .35);
   }
   JS_FreeValue(s->context, camera);
   IslandCommand command;

@@ -20,6 +20,8 @@ if (command === "assets") {
   try {
     await run([process.env.CC ?? "cc", "-std=c11", "-Wall", "-Wextra", "-Werror", `${app}/scripts/perf-test.c`, "-o", `${testDir}/perf-test`]);
     await run([`${testDir}/perf-test`]);
+    await run([process.env.CC ?? "cc", "-std=c11", "-Wall", "-Wextra", "-Werror", `${app}/scripts/view-test.c`, "-lm", "-o", `${testDir}/view-test`]);
+    await run([`${testDir}/view-test`]);
   } finally {
     rmSync(testDir, { recursive: true, force: true });
   }
