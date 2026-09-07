@@ -105,8 +105,27 @@ export POCKETJS_TOUCH_SWAP_XY POCKETJS_TOUCH_FLIP_X POCKETJS_TOUCH_FLIP_Y \
 if [ -e "$POCKETJS_DIR/REMOTE" ]; then
     echo "pocketjs: REMOTE present; bringing the network up"
     sh "$POCKETJS_DIR/wifi.sh" up || echo "pocketjs: could not bring Wi-Fi up" >&2
-    if ! pidof telnetd >/dev/null 2>&1; then
+
+    # telnetd needs a pty, and this firmware's rcS never mounts devpts —
+    # nickel did it. Without this the daemon starts and then cannot serve.
+    if ! grep -q " /dev/pts " /proc/mounts 2>/dev/null; then
+        mkdir -p /dev/pts
+        mount -t devpts devpts /dev/pts 2>/dev/null ||
+            echo "pocketjs: could not mount devpts" >&2
+    fi
+
+    if pidof telnetd >/dev/null 2>&1; then
+        echo "pocketjs: telnetd already running"
+    # The applet is inside busybox, but 2.1.5 ships no symlink for it, so
+    # calling it by name finds nothing. root has an empty password field and
+    # /bin/login exists, which is the same way in the firmware's own debug
+    # services offer.
+    elif command -v telnetd >/dev/null 2>&1; then
         telnetd && echo "pocketjs: telnetd listening"
+    elif [ -x /bin/busybox ]; then
+        /bin/busybox telnetd && echo "pocketjs: telnetd listening (busybox applet)"
+    else
+        echo "pocketjs: no telnetd to start" >&2
     fi
 fi
 
