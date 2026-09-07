@@ -5,7 +5,7 @@ A native **Pocket3D social island prototype for Nintendo 3DS**. The upper
 with center-parted, shoulder-length chestnut hair. The lower 320 × 240 screen
 contains conversation, a keyboard button, quick phrases, expressions and emotes.
 
-![Close camera and conversation bubble, native upper-screen readback](evidence/3ds-close-standing.png)
+![Close camera and conversation bubble on the physical New 3DS](evidence/3ds-final-happy.png)
 
 ## Run
 
@@ -260,7 +260,9 @@ with the panel open. Build `ed0a040cc443` then measured **59.80–59.87 FPS**
 over 780 frames across standing, walking, running, waving, sitting and standing
 up, with the panel closed. Its first connected measurement reported **5.48 ms
 update/skin and 1.85 ms upload**. These receipts come from the physical console;
-the benchmark inputs were remote. The subsequent distance-driven gait build
-needs its own console measurement. Keyboard entry, Circle Pad feel and Homebrew
+the benchmark inputs were remote. The final distance-driven gait build,
+`54b4427225e7`, measured **59.825–59.840 FPS** across another 780 frames of the
+same phases, with 5.52 ms update/skin and 1.83 ms upload. Physical GPU readbacks
+also cover neutral/happy local chat and a seated bubble. Keyboard entry, Circle Pad feel and Homebrew
 Launcher return remain separate physical interaction checks. The 30 Hz
 simulation is a chosen update rate, not a measured performance result.

@@ -124,24 +124,26 @@
     }
   ],
   "validation": {
-    "portable_tests": 12,
+    "portable_tests": 14,
     "desktop_pocket3d_tests": 21,
     "clippy": "pass",
     "glb_clips": 18,
     "gpu_capture": "Azahar 2125.1.2 software rasterizer, native 400x240 + 320x240",
-    "hardware": "physical build 9a212c9229d6: 19.30 FPS, 51.82 ms/frame, 33.42 ms update/skin, 8.37 ms upload, 13.10 ms overlapping GPU, panel open; build ed0a040c uploaded and read back byte-exactly, remeasurement pending",
+    "hardware": "physical final build 54b4427225e7: 59.825-59.840 FPS across 780 frames of idle/walk/run/wave/sit/stand, panel closed; 5.52 ms update/skin, 1.83 ms upload; local chat and seated bubble also captured on the console",
     "network": "local only",
     "performance_stats": "pass: native C FPS, percentile, stall, reset and bounded-history tests",
     "performance_menu": "pass: Azahar native chord open/hold/close/release, GPU readback and SD export",
     "runtime_wire_tests": 12,
     "live_devlink": "pass: Azahar authenticated TCP, guest-package rejection, live JS replacement/rejection/timeout, chat and position preservation, remote input, paired GPU screenshot",
-    "live_camera": "pass: Azahar accepted camera span edit, invalid bound rejected with active script retained, original camera restored"
+    "live_camera": "pass: Azahar accepted camera span edit, invalid bound rejected with active script retained, original camera restored",
+    "gait": "pass: actual post-collision distance drives locomotion phase, partial stick and walk/run transitions preserve phase, blocked movement idles; authored stance foot drift/height under 1.2 cm at two speeds for Walk and Run",
+    "hardware_chat": "pass: neutral and happy expressions with local chat, seated bubble GPU readback; returned to standing"
   },
   "sha256": {
-    "release_3dsx": "ccc0ee6692f1d6799e72a594a59e792f51f800d43c8b87a92b8c1f2bbf1971ed",
-    "capture_3dsx": "0fc837554ed71948074e9b20e5b6fe19deaa6bc35183a5b9953fb667e4b2623e",
-    "mira_glb": "c3b46987e3c7ce0be0bfc344f148ca22b156b903521bb2be3b55760d67549a60",
-    "mira_p3m": "1c4f08be7130a28540aaf1e48481a48f4a691defd0f12f7ad3e895fa66bb60b5"
+    "release_3dsx": "2383addc8e54a5c44d2c4ffaa7da5e3b237ab2e890a3050517f7c9a9d049d3a4",
+    "capture_3dsx": "31405d385c0abe38e7857a7bb26483d96c40de8367f67b949992d8d055e94cfb",
+    "mira_glb": "db9f29f960e00906b4f86a30a13b6bad276ac47117b302683773b3749e516d88",
+    "mira_p3m": "6a03df302eaf2bac6d63faa8b0c37e39945124104a82070ea50ad95cfbd3fa10"
   },
-  "source_revision": "ed0a040cc4435db0cfe741dcdef5f0b31ca2e0de"
+  "source_revision": "54b4427225e7835f23149d795604d533a3709a18"
 }
