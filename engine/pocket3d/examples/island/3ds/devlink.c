@@ -160,6 +160,11 @@ const char *island_dev_status(void) {
 static void stats(const PerfStats *p, const IslandSnapshot *s, unsigned frame, const char *id) {
   JSValue obj = response("island.stats", id);
   string(obj, "build", ISLAND_BUILD_ID);
+  number(obj, "speedupRequested", 1);
+  number(obj, "cameraSpan", active->camera.span);
+  number(obj, "cameraEyeHeight", active->camera.eye_height);
+  number(obj, "cameraDistance", active->camera.distance);
+  number(obj, "cameraTargetHeight", active->camera.target_height);
   string(obj, "title", active->title);
   char hash[17];
   snprintf(hash, sizeof hash, "%016llx", (unsigned long long)active->hash);
@@ -173,6 +178,9 @@ static void stats(const PerfStats *p, const IslandSnapshot *s, unsigned frame, c
   number(obj, "p95Ms", p->latest.p95_ms); number(obj, "maxMs", p->latest.max_ms);
   number(obj, "samples", p->latest.frames); number(obj, "elapsedMs", p->latest.elapsed_ms);
   number(obj, "panel", p->latest.panel);
+  number(obj, "avatarVertices", p->latest.avatar_vertices);
+  number(obj, "terrainVertices", p->latest.terrain_vertices);
+  number(obj, "stepsPerFrame", p->latest.steps);
   number(obj, "remoteFramesLeft", input.left);
   const char *names[] = {"updateSkinMs", "uploadMs", "drawUiMs", "endMs", "waitMs", "gpuPreviousMs"};
   for (int i = 0; i < PERF_STAGES; i++) number(obj, names[i], p->latest.stage[i]);

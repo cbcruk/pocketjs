@@ -36,7 +36,7 @@ static void perf_save(void) {
     snprintf(perf_notice, sizeof perf_notice, "SD save failed. X retries.");
     return;
   }
-  fprintf(f, "# pocket-island-perf-v1 build=%s new_3ds=%u capture=%u\n",
+  fprintf(f, "# pocket-island-perf-v1 build=%s new_3ds=%u speedup_requested=1 capture=%u\n",
           ISLAND_BUILD_ID, new_3ds,
 #ifdef ISLAND_CAPTURE
           1u
@@ -82,6 +82,7 @@ static const char *actions[] = {
     "Waving hello",        "Feeling wonderful"};
 static char notice[64] = "Touch a phrase to say hello.";
 static uint32_t ink, paper, muted, mint, accent, linecol;
+static float corner_x[28], corner_y[28];
 static void rect(float x, float y, float w, float h, uint32_t c) {
   C2D_DrawRectSolid(x, y, .1, w, h, c);
 }
@@ -92,9 +93,9 @@ static void roundrect(float x, float y, float w, float h, float r, uint32_t c) {
     float cx = x + (corner == 0 || corner == 3 ? r : w - r),
           cy = y + (corner < 2 ? r : h - r);
     for (int j = 0; j < 7; j++) {
-      float a = (180 + corner * 90 + j * 15) * M_PI / 180.0f;
-      px[corner * 7 + j] = cx + cosf(a) * r;
-      py[corner * 7 + j] = cy + sinf(a) * r;
+      int i = corner * 7 + j;
+      px[i] = cx + corner_x[i] * r;
+      py[i] = cy + corner_y[i] * r;
     }
   }
   for (int i = 0; i < 28; i++) {
@@ -195,11 +196,13 @@ static void top_ui(void) {
   // A readable ground shadow roots the avatar in the 3D scene.
   char message[193];
   if (island_bubble(island, (uint8_t *)message, sizeof message)) {
-    const float pixels = 400.0f / 10.8f;
+    const IslandCamera *camera = &island_dev_script()->camera;
+    const float pixels = 400.f / camera->span;
+    const float rise = camera->eye_height - camera->target_height;
+    const float distance = sqrtf(rise * rise + camera->distance * camera->distance);
     float x = 200 + (state.anchor_x - state.cam_x) * pixels;
-    float y = 120 - ((state.anchor_y - .60f) * .7808688f -
-                     (state.anchor_z - state.cam_z) * .624695f) *
-                        pixels;
+    float y = 120 - ((state.anchor_y - camera->target_height) * camera->distance -
+                     (state.anchor_z - state.cam_z) * rise) / distance * pixels;
     bool right = x <= 200;
     // The head anchor is above the hair. Keep a 36 px side gap and a short
     // 9 px tail instead of extending a triangle down to the face centre.
@@ -227,7 +230,7 @@ static void perf_ui(void) {
 #ifdef ISLAND_CAPTURE
   snprintf(row, sizeof row, "CAPTURE BUILD / not gameplay timing");
 #else
-  snprintf(row, sizeof row, "%s  /  %s", ISLAND_BUILD_ID, new_3ds ? "New 3DS" : "3DS");
+  snprintf(row, sizeof row, "%s  /  %s", ISLAND_BUILD_ID, new_3ds ? "New 3DS boost" : "3DS");
 #endif
   text(15, 32, .36, muted, row);
   snprintf(row, sizeof row, "%.1f FPS    %.1f ms / frame", p->fps, p->frame_ms);
@@ -355,6 +358,8 @@ static bool dump(C3D_RenderTarget *target, unsigned width, unsigned frame,
 }
 #endif
 int main(void) {
+  // Match the PocketJS host's normal New 3DS CPU/L2 mode; Old 3DS ignores it.
+  osSetSpeedupEnable(true);
   gfxInitDefault();
   APT_CheckNew3DS(&new_3ds);
   gfxSet3D(false);
@@ -372,6 +377,11 @@ int main(void) {
   mint = C2D_Color32(74, 126, 103, 255);
   accent = C2D_Color32(183, 113, 46, 255);
   linecol = C2D_Color32(235, 233, 210, 255);
+  for (int corner = 0; corner < 4; corner++) for (int j = 0; j < 7; j++) {
+    float a = (180 + corner * 90 + j * 15) * M_PI / 180.f;
+    corner_x[corner * 7 + j] = cosf(a);
+    corner_y[corner * 7 + j] = sinf(a);
+  }
   island = island_new();
   if (!island || !p3d_init(color_shbin, color_shbin_size))
     return 3;
@@ -403,6 +413,7 @@ int main(void) {
     u32 down = hidKeysDown(), held = hidKeysHeld();
     if (down & KEY_START)
       break;
+    bool previous_menu = perf_visible;
     perf_menu_input(down, held);
     if (perf_visible && (down & KEY_X)) {
       perf_save();
@@ -410,7 +421,7 @@ int main(void) {
       last = osGetTime();
     }
     bool menu_input = perf_visible || perf_input_latched;
-    if (menu_input) pending_actions = 0;
+    if (previous_menu != perf_visible) pending_actions = 0;
     island_snapshot(island, &state);
     island_dev_poll(&state, &perf, frame);
     if (island_dev_pause_requested()) {
@@ -428,6 +439,7 @@ int main(void) {
       z = -1;
     if (held & KEY_DDOWN)
       z = 1;
+    if (menu_input) x = z = 0;
     uint32_t flags = !menu_input && (held & KEY_B) ? 1 : 0;
     if (!menu_input && (down & KEY_A)) flags |= script_action("wave", 0, NULL);
     if (!menu_input && (down & KEY_X)) flags |= script_action("sit", 0, NULL);
@@ -505,9 +517,12 @@ int main(void) {
       pending_actions = 0;
       accumulator -= 1. / 30.;
     }
-    // Intermediate catch-up poses are never displayed; skin only the final
-    // pose. At 60 Hz, an unchanged 30 Hz pose can retain its vertex buffer.
-    if (steps) island_present(island);
+    // Keep simulation at 30 Hz, with one interpolated pose per display frame.
+#ifdef ISLAND_CAPTURE
+    island_present(island, 1.f);
+#else
+    island_present(island, accumulator * 30.);
+#endif
     island_snapshot(island, &state);
     v = island_vertices(island, false, &n);
     timing[PERF_UPDATE] = elapsed_ms(stage_start, svcGetSystemTick());
@@ -537,9 +552,12 @@ int main(void) {
     C3D_RenderTargetClear(bottom, C3D_CLEAR_ALL, 0xfffae8ff, 0);
     C3D_FrameDrawOn(top);
     C3D_Mtx projection, view, vp;
-    Mtx_OrthoTilt(&projection, -5.4, 5.4, -3.24, 3.24, .1, 100, false);
-    C3D_FVec eye = FVec3_New(state.cam_x, 8.60, state.cam_z + 10),
-             target = FVec3_New(state.cam_x, .60, state.cam_z),
+    const IslandCamera *camera = &island_dev_script()->camera;
+    const float view_half_width = camera->span * .5f, view_half_height = camera->span * .3f;
+    Mtx_OrthoTilt(&projection, -view_half_width, view_half_width,
+                  -view_half_height, view_half_height, .1, 100, false);
+    C3D_FVec eye = FVec3_New(state.cam_x, camera->eye_height, state.cam_z + camera->distance),
+             target = FVec3_New(state.cam_x, camera->target_height, state.cam_z),
              up = FVec3_New(0, 1, 0);
     Mtx_LookAt(&view, eye, target, up, false);
     Mtx_Multiply(&vp, &projection, &view);

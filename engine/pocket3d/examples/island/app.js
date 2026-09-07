@@ -4,6 +4,7 @@ globalThis.islandApp = {
   version: 1,
   title: "A little island, together.",
   room: "LOCAL ROOM",
+  camera: { span: 7.2, eyeHeight: 6.6, distance: 10, targetHeight: 0.8 },
   phrases: [
     "Hello, island!",
     "Let's take a walk.",

@@ -1,4 +1,5 @@
 #include "script.h"
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -29,6 +30,16 @@ static bool property_text(JSContext *ctx, JSValueConst obj, const char *key,
                           char *out, size_t cap) {
   JSValue v = JS_GetPropertyStr(ctx, obj, key);
   bool ok = string_value(ctx, v, out, cap);
+  JS_FreeValue(ctx, v);
+  return ok;
+}
+static bool camera_number(JSContext *ctx, JSValueConst obj, const char *key,
+                           float *out, double low, double high) {
+  JSValue v = JS_GetPropertyStr(ctx, obj, key);
+  double n;
+  bool ok = JS_IsNumber(v) && JS_ToFloat64(ctx, &n, v) == 0 &&
+            isfinite(n) && n >= low && n <= high;
+  if (ok) *out = n;
   JS_FreeValue(ctx, v);
   return ok;
 }
@@ -127,12 +138,24 @@ bool island_script_prepare(IslandScript *s, const char *source, size_t length,
     JS_FreeValue(s->context, phrase);
   }
   JS_FreeValue(s->context, phrases);
+  // Older v1 scripts retain the close view; explicit camera edits validate
+  // in the candidate context before the host replaces the active script.
+  s->camera = (IslandCamera){7.2f, 6.6f, 10.f, .8f};
+  JSValue camera = JS_GetPropertyStr(s->context, s->app, "camera");
+  if (!JS_IsUndefined(camera)) {
+    ok = ok && JS_IsObject(camera) &&
+      camera_number(s->context, camera, "span", &s->camera.span, 5, 16) &&
+      camera_number(s->context, camera, "eyeHeight", &s->camera.eye_height, 3, 14) &&
+      camera_number(s->context, camera, "distance", &s->camera.distance, 6, 20) &&
+      camera_number(s->context, camera, "targetHeight", &s->camera.target_height, .4, 1.8);
+  }
+  JS_FreeValue(s->context, camera);
   IslandCommand command;
   if (!ok || !island_script_event(s, "validate", 0, 0, "", &command, error, size)) goto invalid;
   s->hash = island_script_hash(source, length);
   return true;
 invalid:
-  snprintf(error, size, "Invalid islandApp v1, handler, title, room or four phrases");
+  snprintf(error, size, "Invalid islandApp v1, handler, labels, phrases or bounded camera");
   island_script_free(s);
   return false;
 }

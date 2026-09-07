@@ -75,12 +75,26 @@ def register(o, name, material, bone=None, world=False):
     return o
 
 
-def ell(name, loc, scale, material, bone=None, world=False, seg=12, rings=8):
+def ell(name, loc, scale, material, bone=None, world=False, seg=8, rings=6):
     bpy.ops.mesh.primitive_uv_sphere_add(segments=seg, ring_count=rings, location=loc)
     o = bpy.context.object
     o.scale = scale
     bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
     return register(o, name, material, bone, world)
+
+
+def disc(name, loc, scale, material, seg=12):
+    # Raised center and an elliptical rim: the buried underside of paths and
+    # subpixel flower petals does not need a closed, latitude-divided sphere.
+    verts = [(loc[0], loc[1], loc[2] + scale[2])]
+    verts += [(loc[0] + scale[0] * math.cos(i * math.tau / seg),
+               loc[1] + scale[1] * math.sin(i * math.tau / seg), loc[2])
+              for i in range(seg)]
+    mesh = bpy.data.meshes.new(name)
+    mesh.from_pydata(verts, [], [(0, i + 1, (i + 1) % seg + 1) for i in range(seg)])
+    o = bpy.data.objects.new(name, mesh)
+    bpy.context.collection.objects.link(o)
+    return register(o, name, material, world=True)
 
 
 def cube(name, loc, scale, material, bone=None, world=False, bevel=0):
@@ -91,7 +105,7 @@ def cube(name, loc, scale, material, bone=None, world=False, bevel=0):
     if bevel:
         md = o.modifiers.new("soft corners", "BEVEL")
         md.width = bevel
-        md.segments = 2
+        md.segments = 1
         bpy.context.view_layer.objects.active = o
         bpy.ops.object.modifier_apply(modifier=md.name)
     return register(o, name, material, bone, world)
@@ -630,25 +644,21 @@ for name, z, rx, ry, ma in [
 for i in range(18):
     y = -5.1 + i * 0.56
     x = 0.25 * math.sin(y * 0.65)
-    ell(
+    disc(
         "sandy garden path",
-        (x, y, 0.087),
-        (0.64, 0.45, 0.023),
+        (x, y, 0.106),
+        (0.40, 0.28, 0.004),
         pathmat,
-        world=True,
         seg=12,
-        rings=6,
     )
 for x in [-3.2, 3.2]:
     for i in range(7):
-        ell(
+        disc(
             "side path",
-            (x * i / 7, 0.50, 0.086),
-            (0.42, 0.44, 0.021),
+            (x * i / 7, 0.50, 0.106),
+            (0.18, 0.20, 0.004),
             pathmat,
-            world=True,
             seg=10,
-            rings=6,
         )
 COLLIDERS = []
 
@@ -666,8 +676,8 @@ def tree(x, y, s=1):
             (sz * s, sz * 0.88 * s, sz * 0.83 * s),
             ma,
             world=True,
-            seg=12,
-            rings=8,
+            seg=10,
+            rings=6,
         )
     for a in [0.2, 2.4, 4.4]:
         ell(
@@ -676,8 +686,8 @@ def tree(x, y, s=1):
             (0.115 * s,) * 3,
             fruit,
             world=True,
-            seg=10,
-            rings=6,
+            seg=8,
+            rings=4,
         )
     COLLIDERS.append((x, -y, 0.38 * s))
 
@@ -803,23 +813,19 @@ for i in range(35):
     line("flower stem", [(x, y, 0.1), (x, y, 0.34)], 0.014, leaf, world=True)
     for k in range(5):
         ang = k * math.tau / 5
-        ell(
+        disc(
             "flower petal",
             (x + 0.075 * math.cos(ang), y + 0.075 * math.sin(ang), 0.36),
             (0.057, 0.057, 0.028),
             pink if i % 3 else cream,
-            world=True,
-            seg=8,
-            rings=4,
+            seg=6,
         )
-    ell(
+    disc(
         "flower heart",
         (x, y, 0.382),
         (0.036, 0.036, 0.024),
         dress,
-        world=True,
         seg=8,
-        rings=4,
     )
 for i in range(28):
     a = i * math.tau / 28

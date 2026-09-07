@@ -5,7 +5,7 @@ A native **Pocket3D social island prototype for Nintendo 3DS**. The upper
 with center-parted, shoulder-length chestnut hair. The lower 320 × 240 screen
 contains conversation, a keyboard button, quick phrases, expressions and emotes.
 
-![Native 3DS conversation](evidence/3ds-chat.png)
+![Close camera and conversation bubble, native upper-screen readback](evidence/3ds-close-standing.png)
 
 ## Run
 
@@ -61,8 +61,12 @@ Without `--host`, the tool discovers a paired `p3d-island` target.
 Screenshots and measurement receipts go to `dist/island/hardware/`.
 **Remote input receipts identify tool-driven actions**, not physical gestures.
 
-`app.js` owns the title, room label, quick phrases, message handling, expression
-selection and emote commands. The host runs these callbacks on input events;
+`app.js` owns the title, room label, camera settings, quick phrases, message handling, expression
+selection and emote commands. Camera span, eye height, distance and target height
+are validated when a script is replaced. **Zoom and viewing-angle edits use
+`bun island push` without FTP or a native rebuild.** An invalid camera retains
+the running script; older v1 scripts without a camera object use the close-view defaults.
+The host runs interaction callbacks on input events;
 the per-vertex animation and rendering loops remain native. A script reload
 preserves the world, position, animation and conversation. A candidate context
 must evaluate, expose the versioned application object and pass its validation
@@ -103,9 +107,26 @@ GPU queue completes; that overlapping queue duration must not be added to CPU
 stage times. Panel visibility is recorded per window because replacing the
 conversation UI changes rendering cost.
 
-Simulation catch-up samples the skeleton on each fixed step and skins the
-final pose once for presentation. The regression test compares every output
-vertex with per-step skinning through walking, running, sitting and waving.
+Simulation catch-up samples the skeleton on each fixed step. Presentation
+interpolates the two completed poses, avatar position and camera for each
+display frame, then skins once. **30 Hz simulation can produce 60 Hz motion**
+without changing movement speed, message lifetimes or animation clocks.
+Expression visibility switches at a simulation tick to prevent double faces.
+Tests compare the completed pose with per-step skinning and verify that
+intermediate presentations preserve simulation state.
+
+The host requests **New 3DS CPU speedup**, matching the PocketJS host. Old 3DS
+keeps its supported clock. Material color roots are reused within each run of
+vertices with the same color; joint visibility is computed once per pose.
+The island mesh has **9,010 triangles**, down from 24,608. The character asset
+has **8,496 triangles across all face layers**, down from 13,152; inactive
+layers are omitted from submission. Flat paths and flower petals use triangle
+fans, while face and hair silhouettes retain their subdivisions.
+
+The upper camera spans **7.2 world units** across 400 pixels, placing the
+standing character at about 90 pixels tall. Its lower viewing angle exposes
+more of the face. Camera following extends to the shore, and speech-bubble
+projection uses the same camera parameters as the 3D view.
 
 Samples remain in a bounded RAM buffer during gameplay. SD writes occur on
 `X` in the panel or on exit. Keyboard, script replacement and screenshot
@@ -152,7 +173,7 @@ linear TRS channels. No Blender or glTF parser runs on the handheld.
 | `crates/pocket3d/src/anim.rs` | Existing desktop import path, re-exporting the same sampler |
 | `backends/citro3d` | Colored triangle buffers, PICA200 shader and depth / blend state |
 | `examples/island/src` | Fixed 30 Hz application state, collision, locomotion, emotes, face selection and conversation |
-| `examples/island/app.js` | Replaceable application labels, message handling and interaction commands |
+| `examples/island/app.js` | Replaceable application labels, camera settings, message handling and interaction commands |
 | `examples/island/3ds` | Native lifecycle, controller mapping, dual-screen UI, software keyboard, script adapter and C ABI |
 | `hosts/3ds/src/devserver.c` | Shared paired discovery, authenticated control, bounded socket pump and screenshot transport |
 | `examples/island/assets` | Blender source, exported character / island and generated scene layout |
@@ -195,7 +216,8 @@ bun island e2e
 ISLAND_LINK_E2E=1 bun island e2e
 ```
 
-The portable tests exercise mesh deformation, hand elevation during a wave,
+The portable tests exercise mesh deformation, material lighting under rigid
+and nonuniform transforms, presentation interpolation, hand elevation during a wave,
 sitting height, support-foot contact over the walk cycle, bench exit, movement
 bounds, message validation, deduplication,
 delivery transitions and bubble expiry. The desktop Pocket3D tests protect the
@@ -214,7 +236,8 @@ and SD report export. The native C statistics test checks measured FPS,
 stalls, percentile calculation and bounded history.
 
 The separate connection test boots the release binary with an isolated emulator
-pairing key. It verifies TCP authentication, accepted and rejected script
+pairing key. It verifies TCP authentication, live camera changes, rejected
+camera bounds, accepted and rejected script
 replacements, initialization timeout, state preservation, remote chat, bounded
 movement and a dual-screen screenshot over the shared transport. Emulator timing
 in this test is not a physical-console measurement.
@@ -223,7 +246,10 @@ A successful emulator run proves the native build and scripted interactions.
 The first console report, from build `71e89695638d`, measured **8.92 FPS** over
 851 frames with the panel closed: 112.10 ms per frame, 91.98 ms in update plus
 skinning, and 13.29 ms in the overlapping GPU queue. That report identified
-repeated skinning during simulation catch-up. The deferred-skinning build needs
-a new console measurement. Keyboard entry, Circle Pad feel and Homebrew
+repeated skinning during simulation catch-up. A paired connection to the next
+build, `9a212c9229d6`, measured **19.30 FPS**, 51.82 ms per frame, 33.42 ms in
+update plus skinning, 8.37 ms in upload and 13.10 ms in the overlapping GPU queue
+with the panel open. The New 3DS speedup, reduced meshes and interpolated
+presentation build awaits its console measurement. Keyboard entry, Circle Pad feel and Homebrew
 Launcher return remain separate physical interaction checks. The 30 Hz
 simulation is a chosen update rate, not a measured performance result.

@@ -65,13 +65,16 @@ try {
       await client.sendFrame(POCKET_RUNTIME_MSG.packageBegin, encodePocketRuntimePackageBegin(100, 123n));
       await packageVerdict;
       const original = readFileSync(`${root}/engine/pocket3d/examples/island/app.js`, "utf8");
-      const changed = original.replace("A little island, together.", "Linked without FTP.");
+      const changed = original.replace("A little island, together.", "Linked without FTP.").replace("span: 7.2", "span: 7.8");
       const reload = await request("island.reload", { source: changed });
       if (reload.ok !== true) throw new Error(`Valid reload rejected: ${JSON.stringify(reload)}`);
       const after = await request("island.stats", {}, "island.stats");
+      if (Math.abs(Number(after.cameraSpan) - 7.8) > 0.001) throw new Error("Live camera edit was not applied");
       if (after.title !== "Linked without FTP." || Number(after.tick) < Number(initial.tick) || after.x !== initial.x || after.z !== initial.z) throw new Error("JS hot replacement reset native state or retained old UI");
       const rejected = await request("island.reload", { source: "globalThis.islandApp = {" });
       if (rejected.ok !== false || rejected.scriptHash !== reload.scriptHash) throw new Error("Invalid replacement discarded the running script");
+      const badCamera = await request("island.reload", { source: original.replace("span: 7.2", "span: -1") });
+      if (badCamera.ok !== false || badCamera.scriptHash !== reload.scriptHash) throw new Error("Invalid camera discarded the running script");
       const loop = await request("island.reload", { source: "while(true) {}" });
       if (loop.ok !== false || loop.scriptHash !== reload.scriptHash) throw new Error("Unbounded script was accepted");
       await request("island.event", { event: "message", text: "Live TCP message" });
@@ -89,8 +92,9 @@ try {
       const restored = await request("island.reload", { source: original });
       if (restored.ok !== true || restored.scriptHash !== initial.scriptHash) throw new Error("Original script restoration failed");
       const restoredState = await request("island.stats", {}, "island.stats");
+      if (Math.abs(Number(restoredState.cameraSpan) - 7.2) > 0.001) throw new Error("Camera did not restore with the script");
       if (restoredState.messages !== chat.messages || restoredState.x !== motion.x || Number(restoredState.tick) < Number(motion.tick)) throw new Error("Reload lost moved position, chat or simulation progress");
-      writeFileSync(`${fixture}/live-receipt.json`, JSON.stringify({ environment: "Azahar", initial, after, rejected, loop, chat, motion, restored, restoredState, screenshotFrame: screenshot.frame }, null, 2));
+      writeFileSync(`${fixture}/live-receipt.json`, JSON.stringify({ environment: "Azahar", initial, after, rejected, badCamera, loop, chat, motion, restored, restoredState, screenshotFrame: screenshot.frame }, null, 2));
       console.log(`PASS: authenticated TCP, JS replacement/rejection, live chat, remote movement and paired GPU screenshot. ${fixture}`);
     } finally { client.close(); }
   } else {

@@ -93,8 +93,8 @@ pub unsafe extern "C" fn island_snapshot(s: *const Island, out: *mut Snapshot) {
             x: s.position.x,
             y: s.position.y,
             z: s.position.z,
-            cam_x: s.camera.x,
-            cam_z: s.camera.z,
+            cam_x: s.render_camera.x,
+            cam_z: s.render_camera.z,
             anchor_x: a.x,
             anchor_y: a.y,
             anchor_z: a.z,
@@ -172,6 +172,6 @@ pub unsafe extern "C" fn island_message(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn island_present(s: *mut Island) {
-    unsafe { (*s).rebuild_character() }
+pub unsafe extern "C" fn island_present(s: *mut Island, alpha: f32) {
+    unsafe { (*s).present(alpha) }
 }

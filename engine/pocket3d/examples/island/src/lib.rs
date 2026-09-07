@@ -250,6 +250,13 @@ pub struct Island {
     old_locals: Vec<NodeTrs>,
     globals: Vec<Mat4>,
     scratch: Vec<ColorVertex>,
+    previous_locals: Vec<NodeTrs>,
+    render_locals: Vec<NodeTrs>,
+    previous_position: Vec3,
+    previous_yaw: f32,
+    previous_camera: Vec3,
+    render_model: Mat4,
+    pub render_camera: Vec3,
     blend: f32,
 }
 impl Default for Island {
@@ -285,12 +292,20 @@ impl Island {
             terrain,
             character: vec![],
             old_locals: locals.clone(),
+            previous_locals: locals.clone(),
+            render_locals: locals.clone(),
+            previous_position: Vec3::new(0., 0.11, 1.6),
+            previous_yaw: 0.,
+            previous_camera: Vec3::new(0., 0., 1.6),
+            render_model: Mat4::IDENTITY,
+            render_camera: Vec3::ZERO,
             locals,
             globals: vec![],
             scratch: vec![],
             blend: 1.,
         };
         s.animate();
+        s.previous_locals.clone_from(&s.locals);
         s
     }
     fn clip_name(&self) -> &'static str {
@@ -348,6 +363,10 @@ impl Island {
     /// Advance simulation and the small skeleton pose without skinning a mesh.
     /// A host catching up several ticks presents only the final pose.
     pub fn advance(&mut self, input: Input) {
+        self.previous_locals.clone_from(&self.locals);
+        self.previous_position = self.position;
+        self.previous_yaw = self.yaw;
+        self.previous_camera = self.camera;
         self.tick += 1;
         self.action_time += STEP;
         let mut dir = Vec3::new(
@@ -431,11 +450,9 @@ impl Island {
             }
         }
         self.position.y = Self::ground_height(self.position.x, self.position.z);
-        let target = Vec3::new(
-            self.position.x.clamp(-4.4, 4.4),
-            0.,
-            self.position.z.clamp(-3.0, 4.5),
-        );
+        // Follow to the shore as well: a close camera cannot retain the
+        // wide-view clamps without letting the avatar walk off the screen.
+        let target = Vec3::new(self.position.x, 0., self.position.z);
         self.camera = self.camera.lerp(target, 0.075);
         self.sample_pose();
     }
@@ -485,24 +502,65 @@ impl Island {
     }
     /// Skin the last sampled pose once for the next submitted GPU frame.
     pub fn rebuild_character(&mut self) {
-        let model = Mat4::from_rotation_translation(Quat::from_rotation_y(self.yaw), self.position);
+        self.present(1.0);
+    }
+    /// Interpolate the two completed simulation poses without advancing state.
+    /// The host supplies its remaining fixed-step fraction, bounded to [0, 1].
+    pub fn present(&mut self, alpha: f32) {
+        let alpha = if alpha.is_finite() {
+            alpha.clamp(0., 1.)
+        } else {
+            1.
+        };
+        for (i, dst) in self.render_locals.iter_mut().enumerate() {
+            let a = self.previous_locals[i];
+            let b = self.locals[i];
+            *dst = if alpha == 1. {
+                b
+            } else {
+                NodeTrs {
+                    translation: a.translation.lerp(b.translation, alpha),
+                    rotation: a.rotation.slerp(b.rotation, alpha),
+                    // Expression layers switch visibility; interpolating their
+                    // scales would show two faces during a blink or selection.
+                    scale: if self.actor.names[i].starts_with("face.")
+                        || self.actor.names[i] == "blink"
+                    {
+                        b.scale
+                    } else {
+                        a.scale.lerp(b.scale, alpha)
+                    },
+                }
+            };
+        }
         self.actor
-            .skin(&self.globals, model, &mut self.scratch, &mut self.character);
-        let mut shadow = Vec::with_capacity(96);
-        let y = Self::ground_height(self.position.x, self.position.z) + 0.002;
+            .skeleton
+            .globals_from_locals(&self.render_locals, &mut self.globals);
+        let position = self.previous_position.lerp(self.position, alpha);
+        let rotation =
+            Quat::from_rotation_y(self.previous_yaw).slerp(Quat::from_rotation_y(self.yaw), alpha);
+        self.render_model = Mat4::from_rotation_translation(rotation, position);
+        self.render_camera = self.previous_camera.lerp(self.camera, alpha);
+        self.actor.skin(
+            &self.globals,
+            self.render_model,
+            &mut self.scratch,
+            &mut self.character,
+        );
+        let y = Self::ground_height(position.x, position.z) + 0.002;
         for i in 0..32 {
             let a = i as f32 * core::f32::consts::TAU / 32.0;
             let b = (i + 1) as f32 * core::f32::consts::TAU / 32.0;
-            shadow.push(ColorVertex {
-                position: [self.position.x, y, self.position.z],
+            self.character.push(ColorVertex {
+                position: [position.x, y, position.z],
                 color: [0.13, 0.19, 0.10, 0.19],
             });
             for angle in [a, b] {
-                shadow.push(ColorVertex {
+                self.character.push(ColorVertex {
                     position: [
-                        self.position.x + 0.34 * libm::cosf(angle),
+                        position.x + 0.34 * libm::cosf(angle),
                         y,
-                        self.position.z + 0.22 * libm::sinf(angle),
+                        position.z + 0.22 * libm::sinf(angle),
                     ],
                     color: [0.13, 0.19, 0.10, 0.0],
                 });
@@ -510,7 +568,6 @@ impl Island {
         }
         // The shadow is at the feet, so drawing it after the avatar remains
         // depth-correct while avoiding a second allocation for the mesh body.
-        self.character.extend(shadow);
     }
     /// Head anchor follows the sampled skeleton (including sitting and waving).
     pub fn bubble_anchor(&self) -> Vec3 {
@@ -520,13 +577,67 @@ impl Island {
             .iter()
             .position(|n| n == "chat.anchor")
             .unwrap();
-        self.position + Quat::from_rotation_y(self.yaw) * self.globals[anchor].w_axis.truncate()
+        self.render_model
+            .transform_point3(self.globals[anchor].w_axis.truncate())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn presentation_interpolates_motion_without_advancing_simulation() {
+        let mut s = Island::new();
+        for input in [
+            Input {
+                x: 1.,
+                run: true,
+                ..Input::default()
+            },
+            Input {
+                wave: true,
+                ..Input::default()
+            },
+            Input {
+                sit: true,
+                ..Input::default()
+            },
+        ] {
+            s.advance(input);
+            let tick = s.tick;
+            let position = s.position;
+            let locals = s.locals.clone();
+            s.present(0.);
+            let start = s.render_model.w_axis.truncate();
+            s.present(1.);
+            let end = s.render_model.w_axis.truncate();
+            let final_vertices = s.character.clone();
+            s.present(0.5);
+            assert!((s.render_model.w_axis.truncate() - start.lerp(end, 0.5)).length() < 1e-5);
+            assert!((s.render_camera - s.previous_camera.lerp(s.camera, 0.5)).length() < 1e-5);
+            assert_eq!(s.tick, tick);
+            assert_eq!(s.position, position);
+            for (a, b) in s.locals.iter().zip(&locals) {
+                assert_eq!(a.translation, b.translation);
+                assert_eq!(a.rotation, b.rotation);
+                assert_eq!(a.scale, b.scale);
+            }
+            s.rebuild_character();
+            for (a, b) in s.character.iter().zip(&final_vertices) {
+                assert_eq!(a.position, b.position);
+                assert_eq!(a.color, b.color);
+            }
+        }
+        // Face switches and blinks must never interpolate into double faces.
+        s.set_expression(3);
+        s.advance(Input::default());
+        s.present(1.);
+        let count = s.character.len();
+        for alpha in [0., 0.25, 0.5, 0.75, 1.] {
+            s.present(alpha);
+            assert_eq!(s.character.len(), count);
+        }
+    }
     #[test]
     fn deferred_skin_matches_each_tick_presentation_across_transitions() {
         let mut immediate = Island::new();

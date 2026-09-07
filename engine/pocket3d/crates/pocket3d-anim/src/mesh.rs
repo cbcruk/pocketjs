@@ -243,33 +243,45 @@ impl MeshAsset {
         scratch: &mut Vec<ColorVertex>,
         output: &mut Vec<ColorVertex>,
     ) {
-        let palette: Vec<Mat4> = globals
+        let palette: Vec<(Mat4, bool)> = globals
             .iter()
             .zip(&self.inverse_bind)
-            .map(|(g, b)| model * *g * *b)
+            .map(|(g, b)| {
+                let m = model * *g * *b;
+                let visible = m
+                    .x_axis
+                    .truncate()
+                    .length_squared()
+                    .max(m.y_axis.truncate().length_squared())
+                    .max(m.z_axis.truncate().length_squared())
+                    >= 1e-6;
+                (m, visible)
+            })
             .collect();
+        let light_direction = Vec3::new(-0.42, 0.82, 0.38).normalize();
+        // Material runs share the same base color. sqrt(c * l) = sqrt(c) *
+        // sqrt(l), so keep three color roots per run and one per vertex.
+        // This call-local cache also respects callers editing public vertices.
+        let mut last_color = Vec3::splat(-1.0);
+        let mut display_color = Vec3::ZERO;
         scratch.clear();
         for v in &self.vertices {
-            let m = palette[v.joint];
-            if m.x_axis
-                .truncate()
-                .length_squared()
-                .max(m.y_axis.truncate().length_squared())
-                .max(m.z_axis.truncate().length_squared())
-                < 1e-6
-            {
+            let (m, visible) = palette[v.joint];
+            if !visible {
                 scratch.push(ColorVertex::default());
                 continue;
             }
             let pos = m.transform_point3(v.position);
             let normal = m.transform_vector3(v.normal).normalize_or_zero();
-            let diffuse = normal
-                .dot(Vec3::new(-0.42, 0.82, 0.38).normalize())
-                .max(0.0);
+            let diffuse = normal.dot(light_direction).max(0.0);
             let light = 0.69 + 0.31 * diffuse;
             // Blender material factors are linear. PICA's framebuffer has no
             // sRGB conversion; a sqrt transfer preserves the pastel palette.
-            let rgb = (v.color * light).sqrt();
+            if v.color != last_color {
+                display_color = v.color.sqrt();
+                last_color = v.color;
+            }
+            let rgb = display_color * Vec3::splat(light).sqrt().x;
             scratch.push(ColorVertex {
                 position: pos.to_array(),
                 color: [rgb.x, rgb.y, rgb.z, 1.0],
@@ -288,5 +300,75 @@ impl MeshAsset {
         self.skeleton
             .globals_from_locals(&self.skeleton.rest, &mut g);
         g
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn material_runs_match_reference_skinning_across_transforms_and_visibility() {
+        let mut asset = MeshAsset {
+            skeleton: Skeleton {
+                parents: vec![usize::MAX; 2],
+                rest: vec![NodeTrs::IDENTITY; 2],
+                order: vec![0, 1],
+            },
+            names: vec![],
+            clips: vec![],
+            inverse_bind: vec![Mat4::IDENTITY; 2],
+            indices: (0..6).collect(),
+            vertices: (0..6)
+                .map(|i| Vertex {
+                    position: Vec3::new(i as f32, 0.5, -0.2),
+                    normal: Vec3::new(0.3, 0.8, -0.4),
+                    color: if i < 4 {
+                        Vec3::new(0., 0.25, 1.)
+                    } else {
+                        Vec3::new(0.8, 0.02, 0.3)
+                    },
+                    joint: i / 3,
+                })
+                .collect(),
+        };
+        for scale in [Vec3::ONE, Vec3::new(0.3, 2., 1.2)] {
+            for hidden in [false, true] {
+                let model = Mat4::from_rotation_translation(Quat::from_rotation_y(0.8), Vec3::X);
+                let globals = [
+                    Mat4::from_scale_rotation_translation(
+                        scale,
+                        Quat::from_rotation_x(-0.4),
+                        Vec3::Y,
+                    ),
+                    Mat4::from_scale(Vec3::splat(if hidden { 0.0001 } else { 1. })),
+                ];
+                let mut scratch = vec![];
+                let mut out = vec![];
+                asset.skin(&globals, model, &mut scratch, &mut out);
+                assert_eq!(out.len(), if hidden { 3 } else { 6 });
+                for (v, actual) in asset.vertices.iter().zip(&out) {
+                    let m = model * globals[v.joint];
+                    let normal = m.transform_vector3(v.normal).normalize_or_zero();
+                    let light =
+                        0.69 + 0.31 * normal.dot(Vec3::new(-0.42, 0.82, 0.38).normalize()).max(0.);
+                    let expected = (v.color * light).sqrt();
+                    assert!(
+                        (Vec3::from_array(actual.position) - m.transform_point3(v.position))
+                            .length()
+                            < 1e-6
+                    );
+                    assert!(
+                        (Vec3::from_slice(&actual.color) - expected)
+                            .abs()
+                            .max_element()
+                            < 2e-7
+                    );
+                    assert_eq!(actual.color[3], 1.);
+                }
+                // Editing a public vertex must not reuse stale material data.
+                asset.vertices[0].color = Vec3::splat(0.1);
+            }
+        }
     }
 }
