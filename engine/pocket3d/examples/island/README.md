@@ -77,6 +77,17 @@ Paired GPU screenshots cover 2, 4 and 8 walking actors. This measures the
 current renderer and scene; it does not establish a universal hardware polygon
 limit or include network, voice or remote-player logic.
 
+On the physical New 3DS, build `ea548e2bcae3` measured **38.35 FPS for two
+independent walking actors** and **29.44 FPS for four**, with the island and
+performance panel visible. The two-actor case spent 10.69 ms in update/skin,
+3.68 ms in upload and 11.61 ms in the overlapping GPU queue. Frozen poses that
+reuse uploaded buffers reached **59.83 FPS with six actors and 41,026
+triangles**, and 58.52 FPS with eight actors and 51,698 triangles. These results
+identify deformation and vertex streaming as the first optimization target for
+animated rooms. The panel adds host/UI work; the test does not establish the
+two-player frame rate with that panel removed. The [hardware crowd report](evidence/3ds-crowd-report.md)
+contains all 16 cases, timing windows, GPU screenshots and capacity limits.
+
 `app.js` owns the title, room label, camera settings, quick phrases, message handling, expression
 selection and emote commands. Camera span, eye height, distance and target height
 are validated when a script is replaced. **Zoom and viewing-angle edits use

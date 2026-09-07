@@ -129,7 +129,7 @@
     "clippy": "pass",
     "glb_clips": 18,
     "gpu_capture": "Azahar 2125.1.2 software rasterizer, native 400x240 + 320x240",
-    "hardware": "preceding gait build 54b4427225e7 measured 59.825-59.840 FPS; crowd-probe build ea548e2bcae3 uploaded and read back byte-exactly; waiting for runtime to measure actor scaling",
+    "hardware": "physical build ea548e2bcae3: all 16 crowd and GPU isolation cases completed; 2 walking actors 38.35 FPS, 4 walking actors 29.44 FPS; 6 frozen actors plus island 59.83 FPS, 8 frozen 58.52 FPS; restored single player 59.85 FPS",
     "network": "local only",
     "performance_stats": "pass: native C FPS, percentile, stall, reset and bounded-history tests",
     "performance_menu": "pass: Azahar native chord open/hold/close/release, GPU readback and SD export",
@@ -138,7 +138,7 @@
     "live_camera": "pass: Azahar accepted camera span edit, invalid bound rejected with active script retained, original camera restored",
     "gait": "pass: actual post-collision distance drives locomotion phase, partial stick and walk/run transitions preserve phase, blocked movement idles; authored stance foot drift/height under 1.2 cm at two speeds for Walk and Run",
     "hardware_chat": "pass: neutral and happy expressions with local chat, seated bubble GPU readback; returned to standing",
-    "crowd": "pass: independent actors share the immutable asset; Azahar exercises two walking actors, eight frozen actors, empty scene, count rejection and player restoration; physical scaling probe pending"
+    "crowd": "pass: physical paired TCP, three complete timing windows per case, matching workload generations, independent walking positions and animation clocks, frozen states unchanged, paired GPU captures for 2/4/8 walkers, player position and chat restored"
   },
   "sha256": {
     "release_3dsx": "1ed4c4d2bc7f8e739f4427e63c05721e5705a7a054618d9369c7f54ff8e16105",
