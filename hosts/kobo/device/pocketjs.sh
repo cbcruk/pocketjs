@@ -81,9 +81,36 @@ if ! mkdir "$POCKETJS_LOCK" 2>/dev/null; then
 fi
 echo $$ >"$POCKETJS_LOCK/pid"
 
+# rcS makes /tmp/nickel-hardware-status and every hardware event script writes
+# a line to it: udhcpc on each lease, the udev hooks on USB and SD. Nickel is
+# the reader. With nickel gone the pipe has none, so each of those writers
+# blocks in the kernel forever — one leaked shell per network event, for as
+# long as the device stays up. Take over the read side while we own the panel,
+# and hand it back before nickel does, or we would eat the lines it wants.
+STATUS_FIFO="${STATUS_FIFO:-/tmp/nickel-hardware-status}"
+STATUS_DRAIN_PID=""
+
+status_drain_start() {
+    [ -p "$STATUS_FIFO" ] || return 0
+    # Read-write, so the pipe keeps a reader across the gaps between writers
+    # and nobody ever blocks opening it. `cat` then drains what arrives.
+    exec 9<>"$STATUS_FIFO" || return 0
+    cat <&9 >/dev/null 2>&1 &
+    STATUS_DRAIN_PID=$!
+    echo "pocketjs: draining $STATUS_FIFO (pid $STATUS_DRAIN_PID)"
+}
+
+status_drain_stop() {
+    [ -n "$STATUS_DRAIN_PID" ] || return 0
+    kill "$STATUS_DRAIN_PID" 2>/dev/null
+    exec 9>&-
+    STATUS_DRAIN_PID=""
+}
+
 cleanup() {
     status=$?
     trap - EXIT
+    status_drain_stop
     nickel_start
     rm -rf "$POCKETJS_LOCK"
     [ -n "${POCKETJS_STAGE:-}" ] && rm -rf "$POCKETJS_STAGE"
@@ -145,6 +172,7 @@ if [ -e "$POCKETJS_DIR/REMOTE" ]; then
 fi
 
 nickel_stop || fail "nickel would not stop; refusing to fight it for /dev/fb0"
+status_drain_start
 
 [ -f "$POCKETJS_LOG" ] && mv -f "$POCKETJS_LOG" "$POCKETJS_LOG.1"
 echo "pocketjs: logging $POCKETJS_LOG"

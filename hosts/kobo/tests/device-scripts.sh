@@ -226,6 +226,43 @@ check "a session on a pty is left to print" "0" \
 
 mv "$WORK/pak.hidden" "$APP/app.pak"
 
+echo "-- the hardware-status pipe --"
+# rcS creates this pipe and the firmware's own event scripts write a line to
+# it on every DHCP lease and every USB or SD change. Nickel is the reader, so
+# with nickel gone the writer blocks in the kernel and never comes back.
+STATUS_FIFO="$WORK/nickel-hardware-status"
+mkfifo "$STATUS_FIFO"
+export STATUS_FIFO
+cat >"$APP/pocketjs-kobo" <<'STUB'
+#!/bin/sh
+echo "network bound 10.0.0.5" >"$STATUS_FIFO"
+exit 0
+STUB
+chmod +x "$APP/pocketjs-kobo"
+
+# Run with a deadline: an undrained pipe does not fail the launch, it hangs it,
+# and a hanging suite reports nothing at all.
+launch_before() {
+    "$DEVICE_DIR/pocketjs.sh" >"$WORK/out" 2>&1 &
+    pid=$!
+    ticks=0
+    while kill -0 "$pid" 2>/dev/null && [ "$ticks" -lt 100 ]; do
+        sleep 0.05
+        ticks=$((ticks + 1))
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+        kill -9 "$pid" 2>/dev/null
+        echo blocked
+    else
+        wait "$pid"
+        echo $?
+    fi
+}
+
+echo running >"$NICKEL_STATE"
+check "a hardware event does not block the session" "0" "$(launch_before)"
+check "the UI is restored after draining" "running" "$(await_nickel)"
+
 echo
 if [ "$FAILURES" -eq 0 ]; then
     echo "device scripts: all checks passed"
