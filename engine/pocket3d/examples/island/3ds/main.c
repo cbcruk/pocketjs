@@ -201,15 +201,19 @@ static void top_ui(void) {
                      (state.anchor_z - state.cam_z) * .624695f) *
                         pixels;
     bool right = x <= 200;
-    float bx = fmaxf(8, fminf(226, right ? x + 22 : x - 188)),
+    // The head anchor is above the hair. Keep a 36 px side gap and a short
+    // 9 px tail instead of extending a triangle down to the face centre.
+    float bx = fmaxf(8, fminf(238, right ? x + 36 : x - 190)),
           by = fmaxf(43, fminf(154, y - 16));
-    roundrect(bx + 1, by + 2, 166, 48, 9, C2D_Color32(48, 77, 63, 60));
-    roundrect(bx, by, 166, 48, 9, paper);
-    float edge = right ? bx : bx + 166;
-    C2D_DrawTriangle(edge, by + 20, paper, edge, by + 33, paper, x, y + 22,
+    roundrect(bx + 1, by + 2, 154, 48, 9, C2D_Color32(48, 77, 63, 60));
+    roundrect(bx, by, 154, 48, 9, paper);
+    float edge = right ? bx : bx + 154;
+    float tail_y = fmaxf(by + 12, fminf(by + 36, y));
+    C2D_DrawTriangle(edge, tail_y - 5, paper, edge, tail_y + 5, paper,
+                     edge + (right ? -9 : 9), tail_y,
                      paper, .1);
     text(bx + 10, by + 4, .34, accent, "Mira");
-    wrapped(bx + 10, by + 18, .40, 146, 2, message, ink);
+    wrapped(bx + 10, by + 18, .40, 134, 2, message, ink);
   }
   roundrect(10, 211, 178, 21, 7, paper);
   text(18, 214, .36, muted, actions[state.action]);
