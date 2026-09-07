@@ -1,0 +1,130 @@
+{
+  "fixture": "/Users/evan/.superset/worktrees/pocketjs/roan-nebula/dist/island/e2e/run-EiLzus",
+  "renderer": "0",
+  "frames": [
+    {
+      "frame": 1,
+      "tick": 1,
+      "x": 0,
+      "z": 1.6,
+      "action": 0,
+      "expression": 0,
+      "messages": 0,
+      "vertices": 8700,
+      "perf_panel": 0
+    },
+    {
+      "frame": 31,
+      "tick": 31,
+      "x": 1.04,
+      "z": 1.6,
+      "action": 1,
+      "expression": 0,
+      "messages": 0,
+      "vertices": 8700,
+      "perf_panel": 0
+    },
+    {
+      "frame": 61,
+      "tick": 61,
+      "x": 0.0033,
+      "z": 1.6,
+      "action": 2,
+      "expression": 0,
+      "messages": 0,
+      "vertices": 8700,
+      "perf_panel": 0
+    },
+    {
+      "frame": 91,
+      "tick": 91,
+      "x": -1.0917,
+      "z": 1.6,
+      "action": 6,
+      "expression": 0,
+      "messages": 0,
+      "vertices": 8700,
+      "perf_panel": 0
+    },
+    {
+      "frame": 121,
+      "tick": 121,
+      "x": -1.0917,
+      "z": 1.6,
+      "action": 6,
+      "expression": 1,
+      "messages": 1,
+      "vertices": 8700,
+      "perf_panel": 0
+    },
+    {
+      "frame": 151,
+      "tick": 151,
+      "x": -1.0917,
+      "z": 1.6,
+      "action": 3,
+      "expression": 1,
+      "messages": 1,
+      "vertices": 8700,
+      "perf_panel": 0
+    },
+    {
+      "frame": 181,
+      "tick": 181,
+      "x": -1.0917,
+      "z": 1.6,
+      "action": 4,
+      "expression": 1,
+      "messages": 1,
+      "vertices": 8700,
+      "perf_panel": 0
+    },
+    {
+      "frame": 211,
+      "tick": 211,
+      "x": -1.0917,
+      "z": 1.6,
+      "action": 5,
+      "expression": 1,
+      "messages": 1,
+      "vertices": 8700,
+      "perf_panel": 0
+    },
+    {
+      "frame": 241,
+      "tick": 241,
+      "x": -1.0917,
+      "z": 1.6,
+      "action": 0,
+      "expression": 1,
+      "messages": 1,
+      "vertices": 8700,
+      "perf_panel": 0
+    },
+    {
+      "frame": 301,
+      "tick": 301,
+      "x": -1.0917,
+      "z": 1.6,
+      "action": 7,
+      "expression": 5,
+      "messages": 1,
+      "vertices": 8844,
+      "perf_panel": 0
+    },
+    {
+      "frame": 331,
+      "tick": 331,
+      "x": -1.0917,
+      "z": 1.6,
+      "action": 0,
+      "expression": 5,
+      "messages": 1,
+      "vertices": 8844,
+      "perf_panel": 1
+    }
+  ],
+  "source_revision": "789197201a0e",
+  "environment": "Azahar software PICA rasterizer",
+  "hardware_timing": false
+}

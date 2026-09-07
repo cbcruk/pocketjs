@@ -309,13 +309,20 @@ card or terminate unrelated emulator processes. The native keyboard return path 
 run; text entry on the physical console is a separate check. The capture also
 checks the performance shortcut's open / hold / close behavior, release latch
 and SD report export. The native C statistics test checks measured FPS,
-stalls, percentile calculation and bounded history.
+stalls, percentile calculation and bounded history. The native camera tests
+verify screen-relative motion and speech projection across yaw/elevation,
+constant orbit rate at 30/60 Hz, resting-stick dead zone, pause bounds and reset.
 
 The separate connection test boots the release binary with an isolated emulator
 pairing key. It verifies TCP authentication, live camera changes, rejected
 camera bounds, accepted and rejected script
 replacements, initialization timeout, state preservation, remote chat, bounded
-movement and a dual-screen screenshot over the shared transport. Emulator timing
+movement and a dual-screen screenshot over the shared transport. It also
+checks base yaw/tilt replacement, rejected angular bounds, movement in the
+rotated screen basis, and two wide views of the cottage and bench.
+The [orbit and geometry captures](evidence/orbit-polish-live-azahar.json) and
+[eleven action frames](evidence/orbit-polish-capture.json) cover build
+`789197201a0e`. Emulator timing
 in this test is not a physical-console measurement.
 
 A successful emulator run proves the native build and scripted interactions.
@@ -335,3 +342,9 @@ same phases, with 5.52 ms update/skin and 1.83 ms upload. Physical GPU readbacks
 also cover neutral/happy local chat and a seated bubble. Keyboard entry, Circle Pad feel and Homebrew
 Launcher return remain separate physical interaction checks. The 30 Hz
 simulation is a chosen update rate, not a measured performance result.
+
+The geometry/orbit release **`789197201a0e`** is installed on the physical
+console with [byte-exact FTP readback](evidence/orbit-polish-upload.json).
+Its sustained two-actor hardware frame rate and physical C-stick response
+remain pending a run of this release. The orbit screenshots above are
+emulator captures.
