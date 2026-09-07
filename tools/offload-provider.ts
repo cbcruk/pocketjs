@@ -177,3 +177,5 @@ export async function dispatchOffload(
     return { id: request.id, error: error instanceof Error ? error.message.slice(0, 160) : "Provider failed" };
   }
 }
+
+export { connectOffloadUsbProvider } from "./offload-usb-provider.ts";

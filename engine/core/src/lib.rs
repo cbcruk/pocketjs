@@ -804,14 +804,19 @@ impl Ui {
     /// core-internal texture (a baked corner disc) is safe: the DiscCache
     /// re-validates its handles each use and re-bakes dead ones.
     pub fn free_texture(&mut self, handle: i32) {
-        let Some(slot) = tex_resolve(&self.textures, handle) else {
-            return;
-        };
+        drop(self.take_texture(handle));
+    }
+
+    /// Invalidate a handle immediately and transfer its storage to the backend.
+    /// A pipelined GPU keeps this owner until its previous commands complete.
+    pub fn take_texture(&mut self, handle: i32) -> Option<Texture> {
+        let slot = tex_resolve(&self.textures, handle)?;
         let s = &mut self.textures[slot as usize];
-        s.tex = None;
+        let texture = s.tex.take();
         s.gen = ((s.gen as u32 + 1) & TEX_GEN_MASK) as u16;
         self.tex_free.push(slot);
         self.bump_raster_revision();
+        texture
     }
 
     /// Validate a bounded prepared geometry entry and own its native storage.
