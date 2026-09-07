@@ -1,0 +1,12 @@
+[package]
+name = "pocket-island"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+pocket3d-anim = { workspace = true }
+libm = "0.2"

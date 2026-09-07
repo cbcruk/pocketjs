@@ -1,0 +1,51 @@
+{
+  "author": "PocketJS contributors",
+  "license": "MIT",
+  "character": "Mira",
+  "source": "build_island.py; original geometry and animation",
+  "blender": "5.1.2",
+  "profile": "P3M1 rigid skin, linear TRS, vertex color",
+  "character_asset": {
+    "vertices": 6999,
+    "triangles": 13152,
+    "bones": 29,
+    "clips": [
+      "Idle",
+      "Walk",
+      "Run",
+      "SitDown",
+      "SitIdle",
+      "StandUp",
+      "Wave",
+      "Cheer",
+      "BenchSitDown",
+      "BenchSitIdle",
+      "BenchStandUp",
+      "Expression_neutral",
+      "Expression_happy",
+      "Expression_sad",
+      "Expression_surprised",
+      "Expression_angry",
+      "Expression_shy",
+      "Expression_sleepy"
+    ],
+    "bytes": 856613
+  },
+  "island_asset": {
+    "vertices": 13326,
+    "triangles": 24608,
+    "bones": 1,
+    "clips": [],
+    "bytes": 801758
+  },
+  "expressions": [
+    "neutral",
+    "happy",
+    "sad",
+    "surprised",
+    "angry",
+    "shy",
+    "sleepy"
+  ],
+  "fps": 24
+}

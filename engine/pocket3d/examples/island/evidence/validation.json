@@ -1,0 +1,120 @@
+{
+  "renderer": "0",
+  "frames": [
+    {
+      "frame": 1,
+      "tick": 1,
+      "x": 0,
+      "z": 1.6,
+      "action": 0,
+      "expression": 0,
+      "messages": 0,
+      "vertices": 24960
+    },
+    {
+      "frame": 31,
+      "tick": 31,
+      "x": 0.7733,
+      "z": 1.6,
+      "action": 1,
+      "expression": 0,
+      "messages": 0,
+      "vertices": 24960
+    },
+    {
+      "frame": 61,
+      "tick": 61,
+      "x": 0.0367,
+      "z": 1.6,
+      "action": 2,
+      "expression": 0,
+      "messages": 0,
+      "vertices": 24960
+    },
+    {
+      "frame": 91,
+      "tick": 91,
+      "x": -0.7583,
+      "z": 1.6,
+      "action": 6,
+      "expression": 0,
+      "messages": 0,
+      "vertices": 24960
+    },
+    {
+      "frame": 121,
+      "tick": 121,
+      "x": -0.7583,
+      "z": 1.6,
+      "action": 6,
+      "expression": 1,
+      "messages": 1,
+      "vertices": 23760
+    },
+    {
+      "frame": 151,
+      "tick": 151,
+      "x": -0.7583,
+      "z": 1.6,
+      "action": 3,
+      "expression": 1,
+      "messages": 1,
+      "vertices": 23760
+    },
+    {
+      "frame": 181,
+      "tick": 181,
+      "x": -0.7583,
+      "z": 1.6,
+      "action": 4,
+      "expression": 1,
+      "messages": 1,
+      "vertices": 23760
+    },
+    {
+      "frame": 211,
+      "tick": 211,
+      "x": -0.7583,
+      "z": 1.6,
+      "action": 5,
+      "expression": 1,
+      "messages": 1,
+      "vertices": 23760
+    },
+    {
+      "frame": 241,
+      "tick": 241,
+      "x": -0.7583,
+      "z": 1.6,
+      "action": 0,
+      "expression": 1,
+      "messages": 1,
+      "vertices": 23760
+    },
+    {
+      "frame": 301,
+      "tick": 301,
+      "x": -0.7583,
+      "z": 1.6,
+      "action": 7,
+      "expression": 5,
+      "messages": 1,
+      "vertices": 25176
+    }
+  ],
+  "validation": {
+    "portable_tests": 9,
+    "desktop_pocket3d_tests": 21,
+    "clippy": "pass",
+    "glb_clips": 18,
+    "gpu_capture": "Azahar 2125.1.2 software rasterizer, native 400x240 + 320x240",
+    "hardware": "not tested",
+    "network": "local only"
+  },
+  "sha256": {
+    "release_3dsx": "50ed076eebd97abf7ef85e2eb6be9675d48d9c3dbf664c177144a9e26ae7d44e",
+    "capture_3dsx": "84e7be648a5654c3046e0d7c91941cd2f55043e0bbf7365af82ad701df1d9642",
+    "mira_glb": "90a88b990576a3d182106c53bc6e207a5fcd7ebebdd2aff69af620391b1ab331",
+    "mira_p3m": "b7fe7a39580718ec116643c0b5e565a2fe4bf42f4cef0f629ba29602e21b145e"
+  }
+}

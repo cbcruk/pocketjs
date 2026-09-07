@@ -1768,6 +1768,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "pocket-island"
+version = "0.1.0"
+dependencies = [
+ "libm",
+ "pocket3d-anim",
+]
+
+[[package]]
 name = "pocket-mod"
 version = "0.1.0"
 dependencies = [
@@ -1866,11 +1874,19 @@ dependencies = [
  "gltf",
  "log",
  "png",
+ "pocket3d-anim",
  "pocket3d-bsp",
  "pollster",
  "serde_json",
  "wgpu",
  "winit",
+]
+
+[[package]]
+name = "pocket3d-anim"
+version = "0.1.0"
+dependencies = [
+ "glam",
 ]
 
 [[package]]

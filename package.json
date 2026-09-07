@@ -116,6 +116,13 @@
     "engine/pocket3d/crates/pocket3d-gles2/src",
     "engine/pocket3d/crates/pocket3d-gles2/Cargo.toml",
     "engine/pocket3d/crates/pocket3d-gles2/Cargo.lock",
+    "engine/pocket3d/crates/pocket3d-anim/src",
+    "engine/pocket3d/crates/pocket3d-anim/Cargo.toml",
+    "engine/pocket3d/examples/island/Cargo.toml",
+    "engine/pocket3d/examples/island/src",
+    "engine/pocket3d/examples/island/assets/mira.p3m",
+    "engine/pocket3d/examples/island/assets/island.p3m",
+    "engine/pocket3d/examples/island/assets/layout.rs",
     "engine/pocket3d/crates/pocket3d/src",
     "engine/pocket3d/crates/pocket3d/Cargo.toml",
     "engine/pocket3d/crates/pocket3d-cook/src",
@@ -289,7 +296,8 @@
     "esp-idf:native": "bun tools/esp-idf-native.ts",
     "esp-idf:release": "bun tools/esp-idf-release.ts",
     "vapor:dev": "bun vapor/scripts/dev.ts",
-    "vapor:check": "bun vapor/compiler/cli.ts check vapor/examples/todo/todo.tsx"
+    "vapor:check": "bun vapor/compiler/cli.ts check vapor/examples/todo/todo.tsx",
+    "island": "bun tools/island.ts"
   },
   "dependencies": {
     "@vue/compiler-sfc": "3.6.0-rc.1",
