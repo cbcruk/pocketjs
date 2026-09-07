@@ -494,8 +494,19 @@ static void release_image(ImageTexture *entry) {
   }
 }
 
+static bool reserve_image_slots(size_t slots) {
+  if (slots <= image_capacity) return true;
+  ImageTexture *grown = realloc(images, slots * sizeof *images);
+  if (grown == NULL) return false;
+  memset(grown + image_capacity, 0, (slots - image_capacity) * sizeof *grown);
+  images = grown;
+  image_capacity = slots;
+  return true;
+}
+
 bool gfx_stage_image(int32_t handle, const uint8_t *bytes, unsigned width, unsigned height) {
   if (prepared_image.live || handle < 0 || !bytes) return false;
+  if (!reserve_image_slots(ui_texture_slot_count())) return false;
   if (!C3D_TexInit(&prepared_image.texture, (u16)width, (u16)height, GPU_RGB565)) return false;
   C3D_TexUpload(&prepared_image.texture, bytes);
   GSPGPU_FlushDataCache(prepared_image.texture.data, prepared_image.texture.size);
@@ -517,16 +528,7 @@ static void release_font(FontTexture *entry) {
 
 static void sync_resources(void) {
   size_t slots = ui_texture_slot_count();
-  if (slots > image_capacity) {
-    ImageTexture *grown = realloc(images, slots * sizeof *images);
-    if (grown != NULL) {
-      memset(grown + image_capacity, 0, (slots - image_capacity) * sizeof *grown);
-      images = grown;
-      image_capacity = slots;
-    } else {
-      slots = image_capacity;
-    }
-  }
+  if (!reserve_image_slots(slots)) slots = image_capacity;
   for (size_t slot = 0; slot < image_capacity; slot += 1) {
     ImageTexture *entry = &images[slot];
     PocketTexture source;
