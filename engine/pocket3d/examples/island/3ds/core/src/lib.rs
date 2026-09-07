@@ -40,10 +40,24 @@ pub struct Snapshot {
     pub expression: u32,
     pub tick: u32,
     pub messages: u32,
+    pub action_time: f32,
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn island_new() -> *mut Island {
     Box::into_raw(Box::new(Island::new()))
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn island_replica(
+    s: *const Island,
+    x: f32,
+    z: f32,
+    phase: f32,
+) -> *mut Island {
+    Box::into_raw(Box::new(unsafe { &*s }.replica(x, z, phase)))
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn island_vertex_capacity(s: *const Island) -> u32 {
+    (unsafe { &*s }.actor.indices.len() + 96) as u32
 }
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn island_free(s: *mut Island) {
@@ -102,6 +116,7 @@ pub unsafe extern "C" fn island_snapshot(s: *const Island, out: *mut Snapshot) {
             expression: s.expression as u32,
             tick: s.tick as u32,
             messages: s.chat.history.len() as u32,
+            action_time: s.action_time,
         }
     }
 }

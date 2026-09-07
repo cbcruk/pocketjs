@@ -41,8 +41,8 @@ if (command === "assets") {
   if (command === "run") await run(["open", "-a", process.env.AZAHAR ?? "/Applications/Azahar.app", "--args", rom]);
 } else if (command === "e2e") {
   await run(["bun", `${app}/scripts/azahar.ts`]);
-} else if (["probe", "push", "dev", "bench"].includes(command)) {
+} else if (["probe", "push", "dev", "bench", "crowd"].includes(command)) {
   await run(["bun", `${app}/scripts/dev.ts`, command, ...process.argv.slice(3)]);
 } else {
-  throw new Error("Usage: bun tools/island.ts [assets|test|build|capture|run|e2e|probe|push|dev|bench]");
+  throw new Error("Usage: bun tools/island.ts [assets|test|build|capture|run|e2e|probe|push|dev|bench|crowd]");
 }

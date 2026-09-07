@@ -6,8 +6,11 @@ typedef struct Island Island;
 typedef struct {
   float x, y, z, cam_x, cam_z, anchor_x, anchor_y, anchor_z;
   uint32_t action, expression, tick, messages;
+  float action_time;
 } IslandSnapshot;
 Island *island_new(void);
+Island *island_replica(const Island *, float x, float z, float phase);
+uint32_t island_vertex_capacity(const Island *);
 void island_free(Island *);
 void island_step(Island *, float x, float z, uint32_t flags);
 void island_present(Island *, float alpha);

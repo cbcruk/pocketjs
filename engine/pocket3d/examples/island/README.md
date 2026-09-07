@@ -54,12 +54,28 @@ bun island probe --host <ip>       # dual-screen GPU capture and live timings
 bun island dev --host <ip>         # watch app.js and replace it after edits
 bun island push --host <ip>        # replace app.js once
 bun island bench --host <ip>       # bounded remote movement/emote tape
+bun island crowd --host <ip>       # independent-avatar and GPU scaling probe
 ```
 
 `--key <file>` selects an existing pairing key from another checkout.
 Without `--host`, the tool discovers a paired `p3d-island` target.
 Screenshots and measurement receipts go to `dist/island/hardware/`.
 **Remote input receipts identify tool-driven actions**, not physical gestures.
+
+`crowd` measures **0–8 local test actors** through the authenticated connection.
+Each actor shares the immutable character asset and retains separate pose,
+locomotion and interpolation state. Walking actors follow phase-offset loops in
+the plaza. The player and conversation are paused and restored when the test
+ends. The native adapter also stops on `B`, disconnect or a 90-second case timeout.
+
+The probe compares walking actors, frozen poses that reuse uploaded buffers,
+the island alone, and actors without terrain. It saves three completed timing
+windows per case after warmup, including workload generation, submitted
+triangles, each actor's position and animation clock, CPU stages and the
+overlapping GPU queue. Windows from the previous workload are excluded.
+Paired GPU screenshots cover 2, 4 and 8 walking actors. This measures the
+current renderer and scene; it does not establish a universal hardware polygon
+limit or include network, voice or remote-player logic.
 
 `app.js` owns the title, room label, camera settings, quick phrases, message handling, expression
 selection and emote commands. Camera span, eye height, distance and target height

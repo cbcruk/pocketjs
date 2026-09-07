@@ -24,6 +24,19 @@ static uint64_t retry_at;
 static bool pause_requested, command_ready;
 static IslandCommand pending_command;
 static struct { float x, z; unsigned flags, left; bool done; char id[64]; } input;
+static IslandBenchmark benchmark;
+static uint64_t benchmark_deadline;
+static IslandSnapshot benchmark_actors[ISLAND_MAX_ACTORS];
+void island_dev_benchmark_actors(Island *const *actors, unsigned count) {
+  for (unsigned i = 0; i < count && i < ISLAND_MAX_ACTORS; i++) island_snapshot(actors[i], &benchmark_actors[i]);
+}
+const IslandBenchmark *island_dev_benchmark(void) { return &benchmark; }
+void island_dev_benchmark_stop(void) {
+  if (!benchmark.enabled) return;
+  benchmark.enabled = false;
+  benchmark.generation++;
+  pause_requested = true;
+}
 
 uint64_t island_script_now(void) { return osGetTime(); }
 static void number(JSValue obj, const char *key, double value) {
@@ -72,6 +85,13 @@ static bool text_property(JSValue obj, const char *key, char *out, size_t cap) {
 static bool numeric_property(JSValue obj, const char *key, double *out, double lo, double hi) {
   JSValue value = JS_GetPropertyStr(json, obj, key);
   bool ok = JS_IsNumber(value) && JS_ToFloat64(json, out, value) == 0 && *out >= lo && *out <= hi;
+  JS_FreeValue(json, value);
+  return ok;
+}
+static bool bool_property(JSValue obj, const char *key, bool *out) {
+  JSValue value = JS_GetPropertyStr(json, obj, key);
+  bool ok = JS_IsBool(value);
+  if (ok) *out = JS_ToBool(json, value);
   JS_FreeValue(json, value);
   return ok;
 }
@@ -161,6 +181,25 @@ static void stats(const PerfStats *p, const IslandSnapshot *s, unsigned frame, c
   JSValue obj = response("island.stats", id);
   string(obj, "build", ISLAND_BUILD_ID);
   number(obj, "speedupRequested", 1);
+  number(obj, "benchmarkEnabled", benchmark.enabled);
+  number(obj, "benchmarkGeneration", benchmark.generation);
+  number(obj, "measuredBenchmarkGeneration", p->latest.workload_generation);
+  number(obj, "actorCount", benchmark.enabled ? benchmark.actors : 1);
+  string(obj, "actorMotion", benchmark.enabled ? (benchmark.animated ? "walk" : "frozen") : "player");
+  number(obj, "terrainEnabled", !benchmark.enabled || benchmark.terrain);
+  number(obj, "linearFreeBytes", linearSpaceFree());
+  if (benchmark.enabled) {
+    JSValue actors = JS_NewArray(json);
+    for (unsigned i = 0; i < benchmark.actors; i++) {
+      const IslandSnapshot *actor = &benchmark_actors[i];
+      JSValue item = JS_NewObject(json);
+      number(item, "x", actor->x); number(item, "z", actor->z);
+      number(item, "action", actor->action); number(item, "tick", actor->tick);
+      number(item, "actionTime", actor->action_time);
+      JS_SetPropertyUint32(json, actors, i, item);
+    }
+    JS_SetPropertyStr(json, obj, "actors", actors);
+  }
   number(obj, "cameraSpan", active->camera.span);
   number(obj, "cameraEyeHeight", active->camera.eye_height);
   number(obj, "cameraDistance", active->camera.distance);
@@ -173,6 +212,7 @@ static void stats(const PerfStats *p, const IslandSnapshot *s, unsigned frame, c
   number(obj, "frame", frame); number(obj, "tick", s->tick);
   number(obj, "x", s->x); number(obj, "z", s->z);
   number(obj, "action", s->action); number(obj, "expression", s->expression);
+  number(obj, "actionTime", s->action_time);
   number(obj, "messages", s->messages);
   number(obj, "fps", p->latest.fps); number(obj, "frameMs", p->latest.frame_ms);
   number(obj, "p95Ms", p->latest.p95_ms); number(obj, "maxMs", p->latest.max_ms);
@@ -209,13 +249,33 @@ static void control(char *line, size_t length, const IslandSnapshot *s, const Pe
     double value = 0;
     numeric_property(obj, "value", &value, 0, 6);
     text_property(obj, "text", message, sizeof message);
-    bool ok = !command_ready && text_property(obj, "event", event, sizeof event)
+    bool ok = !benchmark.enabled && !command_ready && text_property(obj, "event", event, sizeof event)
         && island_dev_event(event, value, s->expression, message, &pending_command);
     if (ok) command_ready = true;
     reply(id, ok, ok ? "Event queued" : "Invalid event or command pending");
+  } else if (!strcmp(type, "island.benchmark")) {
+    IslandBenchmark candidate = {.generation = benchmark.generation + 1};
+    double actors = 0;
+    char motion[16];
+    bool ok = bool_property(obj, "enabled", &candidate.enabled) && !input.left;
+    if (ok && candidate.enabled) {
+      ok = numeric_property(obj, "actors", &actors, 0, ISLAND_MAX_ACTORS) && actors == (unsigned)actors &&
+        bool_property(obj, "terrain", &candidate.terrain) && text_property(obj, "motion", motion, sizeof motion) &&
+        (!strcmp(motion, "walk") || !strcmp(motion, "frozen"));
+      if (ok) {
+        candidate.actors = actors;
+        candidate.animated = !strcmp(motion, "walk");
+      }
+    }
+    if (ok) {
+      benchmark = candidate;
+      benchmark_deadline = osGetTime() + 90000;
+      pause_requested = true;
+    }
+    reply(id, ok, ok ? "Local load test configured; player state preserved" : "Invalid load test or input tape active");
   } else if (!strcmp(type, "island.input")) {
     double x, z, frames, flags;
-    bool ok = !input.left && !input.done && numeric_property(obj, "x", &x, -1, 1)
+    bool ok = !benchmark.enabled && !input.left && !input.done && numeric_property(obj, "x", &x, -1, 1)
         && numeric_property(obj, "z", &z, -1, 1) && numeric_property(obj, "frames", &frames, 1, 120)
         && numeric_property(obj, "flags", &flags, 0, 15) && frames == (unsigned)frames && flags == (unsigned)flags;
     if (ok) {
@@ -234,6 +294,7 @@ void island_dev_poll(const IslandSnapshot *s, const PerfStats *p, unsigned frame
   }
   announce(frame);
   devserver_poll();
+  if (benchmark.enabled && (!devserver_connected() || osGetTime() >= benchmark_deadline)) island_dev_benchmark_stop();
   if (!devserver_connected()) input.left = input.done = 0;
   if (input.done) {
     stats(p, s, frame, input.id);

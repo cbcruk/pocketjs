@@ -68,6 +68,58 @@ try {
     });
     await new Promise<void>(resolve => process.once("SIGINT", resolve));
     watcher.close(); clearTimeout(timer!); await work;
+  } else if (command === "crowd") {
+    const out = resolve(value("--out", `${root}/dist/island/hardware/crowd-${Date.now()}`));
+    mkdirSync(out, { recursive: true });
+    const before = await rpc("island.stats", {}, "island.stats");
+    if (!("benchmarkGeneration" in before)) throw new Error("Install the native crowd-probe build once before using this command");
+    const cases = [
+      { actors: 0, motion: "frozen", terrain: true },
+      ...[1, 2, 3, 4, 6, 8].map(actors => ({ actors, motion: "walk", terrain: true })),
+      ...[1, 2, 3, 4, 6, 8].map(actors => ({ actors, motion: "frozen", terrain: true })),
+      ...[2, 4, 8].map(actors => ({ actors, motion: "frozen", terrain: false })),
+    ];
+    const results: Record<string, unknown>[] = [];
+    const persist = () => writeFileSync(`${out}/crowd.json`, JSON.stringify({ host, input: "remote autonomous load test", before, results }, null, 2));
+    try {
+      for (const config of cases) {
+        const name = `${config.actors}-${config.motion}-${config.terrain ? "island" : "avatars-only"}`;
+        const accepted = await rpc("island.benchmark", { enabled: true, ...config });
+        if (accepted.ok !== true) throw new Error(`Load test rejected: ${accepted.message}`);
+        // Exclude configuration, first uploads, and the preceding GPU queue.
+        await Bun.sleep(2300);
+        const samples: Record<string, any>[] = [];
+        const deadline = Date.now() + 15000;
+        while (samples.length < 3 && Date.now() < deadline) {
+          const stats = await rpc("island.stats", {}, "island.stats");
+          if (stats.actorCount !== config.actors || stats.actorMotion !== config.motion || stats.terrainEnabled !== Number(config.terrain)) throw new Error("Load test changed while measuring");
+          if (Number(stats.samples) > 0 && stats.measuredBenchmarkGeneration === stats.benchmarkGeneration &&
+              !samples.some(row => row.elapsedMs === stats.elapsedMs)) samples.push(stats);
+          if (samples.length < 3) await Bun.sleep(450);
+        }
+        if (samples.length !== 3) throw new Error("Missing complete measurement windows");
+        const frames = samples.reduce((sum, row) => sum + row.samples, 0);
+        const average = (key: string) => samples.reduce((sum, row) => sum + row[key] * row.samples, 0) / frames;
+        const result = { ...config, name, frames, fps: 1000 / average("frameMs"),
+          updateSkinMs: average("updateSkinMs"), uploadMs: average("uploadMs"),
+          drawUiMs: average("drawUiMs"), gpuMs: average("gpuPreviousMs"),
+          triangles: (samples.at(-1)!.avatarVertices + samples.at(-1)!.terrainVertices) / 3,
+          samples };
+        results.push(result); persist();
+        console.log(`${name}: ${result.fps.toFixed(2)} FPS / skin ${result.updateSkinMs.toFixed(2)} ms / upload ${result.uploadMs.toFixed(2)} ms / GPU ${result.gpuMs.toFixed(2)} ms`);
+        if (config.terrain && [2, 4, 8].includes(config.actors) && config.motion === "walk") {
+          const shot = client.waitForScreenshot(30000);
+          await client.sendCtrl({ t: "screenshot" });
+          writeFileSync(`${out}/${name}.png`, (await shot).png);
+        }
+      }
+    } finally {
+      const stopped = await rpc("island.benchmark", { enabled: false });
+      if (stopped.ok !== true) throw new Error("Could not stop load test");
+      const after = await rpc("island.stats", {}, "island.stats");
+      results.push({ restored: after }); persist();
+    }
+    console.log(`Saved crowd scaling and GPU isolation receipts: ${out}`);
   } else if (command === "probe" || command === "bench") {
     const out = resolve(value("--out", `${root}/dist/island/hardware/${Date.now()}`));
     mkdirSync(out, { recursive: true });

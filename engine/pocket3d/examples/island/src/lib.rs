@@ -3,6 +3,7 @@
 extern crate alloc;
 use alloc::{
     collections::VecDeque,
+    rc::Rc,
     string::{String, ToString},
     vec,
     vec::Vec,
@@ -243,7 +244,7 @@ pub struct Island {
     pub tick: u64,
     pub chat: Chat,
     pub on_bench: bool,
-    pub actor: MeshAsset,
+    pub actor: Rc<MeshAsset>,
     pub terrain: Vec<ColorVertex>,
     pub character: Vec<ColorVertex>,
     locals: Vec<NodeTrs>,
@@ -277,6 +278,9 @@ impl Island {
             &mut vec![],
             &mut terrain,
         );
+        Self::with_actor(Rc::new(actor), terrain)
+    }
+    fn with_actor(actor: Rc<MeshAsset>, terrain: Vec<ColorVertex>) -> Self {
         let locals = actor.skeleton.rest.clone();
         let mut s = Self {
             position: Vec3::new(0., 0.11, 1.6),
@@ -304,6 +308,20 @@ impl Island {
             scratch: vec![],
             blend: 1.,
         };
+        s.animate();
+        s.previous_locals.clone_from(&s.locals);
+        s
+    }
+    /// Independent actor state for load testing; immutable mesh/clips are
+    /// shared, while the caller's terrain and conversation remain untouched.
+    pub fn replica(&self, x: f32, z: f32, phase: f32) -> Self {
+        let position = Vec3::new(x, Self::ground_height(x, z), z);
+        let mut s = Self::with_actor(Rc::clone(&self.actor), vec![]);
+        s.position = position;
+        s.previous_position = position;
+        s.change(Action::Walk);
+        s.action_time = phase;
+        s.blend = 1.;
         s.animate();
         s.previous_locals.clone_from(&s.locals);
         s
@@ -610,6 +628,55 @@ impl Island {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn replicas_share_assets_and_keep_independent_motion_and_chat() {
+        let mut original = Island::new();
+        original.send("local state stays here").unwrap();
+        let position = original.position;
+        let mut a = original.replica(-0.7, 1.6, 0.);
+        let mut b = original.replica(0.7, 1.6, 0.2);
+        assert!(Rc::ptr_eq(&original.actor, &a.actor));
+        assert!(Rc::ptr_eq(&a.actor, &b.actor));
+        assert!(a.terrain.is_empty() && b.terrain.is_empty());
+        let mut frozen = b.character.clone();
+        for _ in 0..30 {
+            a.advance(Input {
+                x: 0.5,
+                ..Input::default()
+            });
+            b.advance(Input {
+                z: 0.3,
+                ..Input::default()
+            });
+            a.present(0.5);
+            b.present(0.5);
+        }
+        assert_eq!(a.action, Action::Walk);
+        assert_eq!(b.action, Action::Walk);
+        assert_ne!(a.position, b.position);
+        assert_ne!(a.action_time, b.action_time);
+        assert!(
+            b.character
+                .iter()
+                .zip(&frozen)
+                .any(|(a, b)| a.position != b.position)
+        );
+        frozen.clone_from(&b.character);
+        let tick = b.tick;
+        for _ in 0..10 {
+            a.step(Input::default());
+        }
+        assert_eq!(b.tick, tick);
+        assert!(
+            b.character
+                .iter()
+                .zip(&frozen)
+                .all(|(a, b)| a.position == b.position && a.color == b.color)
+        );
+        assert_eq!(original.tick, 0);
+        assert_eq!(original.position, position);
+        assert_eq!(original.chat.history.len(), 1);
+    }
     #[test]
     fn locomotion_clock_tracks_actual_distance_and_preserves_gait_phase() {
         for run in [false, true] {

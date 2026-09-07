@@ -14,11 +14,12 @@ enum { PERF_UPDATE, PERF_UPLOAD, PERF_DRAW_UI, PERF_END, PERF_WAIT, PERF_GPU };
 typedef struct {
   double elapsed_ms;
   float fps, frame_ms, p95_ms, max_ms, stage[PERF_STAGES], steps;
-  uint32_t frames, avatar_vertices, terrain_vertices, action, panel;
+  uint32_t frames, avatar_vertices, terrain_vertices, action, panel, workload_generation;
 } PerfRow;
 typedef struct {
   PerfRow latest, history[PERF_HISTORY];
   unsigned head, count, frames, gpu_frames;
+  unsigned workload_generation;
   double elapsed_ms, window_ms, sum[PERF_STAGES], steps;
   float durations[PERF_WINDOW_FRAMES];
 } PerfStats;
@@ -58,6 +59,7 @@ static inline bool perf_record(PerfStats *p, float frame_ms,
       .frames = p->frames,
       .avatar_vertices = avatar, .terrain_vertices = terrain,
       .action = action, .panel = panel,
+      .workload_generation = p->workload_generation,
   };
   for (unsigned i = 0; i < PERF_GPU; i++) row.stage[i] = p->sum[i] / p->frames;
   row.stage[PERF_GPU] = p->gpu_frames ? p->sum[PERF_GPU] / p->gpu_frames : 0;

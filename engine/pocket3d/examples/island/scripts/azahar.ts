@@ -94,7 +94,32 @@ try {
       const restoredState = await request("island.stats", {}, "island.stats");
       if (Math.abs(Number(restoredState.cameraSpan) - 7.2) > 0.001) throw new Error("Camera did not restore with the script");
       if (restoredState.messages !== chat.messages || restoredState.x !== motion.x || Number(restoredState.tick) < Number(motion.tick)) throw new Error("Reload lost moved position, chat or simulation progress");
-      writeFileSync(`${fixture}/live-receipt.json`, JSON.stringify({ environment: "Azahar", initial, after, rejected, badCamera, loop, chat, motion, restored, restoredState, screenshotFrame: screenshot.frame }, null, 2));
+      const crowdStart = await request("island.benchmark", { enabled: true, actors: 2, motion: "walk", terrain: true });
+      if (crowdStart.ok !== true) throw new Error("Two-avatar load test rejected");
+      await Bun.sleep(1200);
+      const crowdMoving = await request("island.stats", {}, "island.stats");
+      const actors = crowdMoving.actors as {x:number,z:number,action:number,actionTime:number}[];
+      if (crowdMoving.actorCount !== 2 || actors.length !== 2 || actors.some(a => a.action !== 1) || actors[0].actionTime === actors[1].actionTime) throw new Error("Crowd actors did not walk with independent phases");
+      const crowdShot = client.waitForScreenshot(90000);
+      await client.sendCtrl({ t: "screenshot" });
+      writeFileSync(`${fixture}/crowd-screen.png`, (await crowdShot).png);
+      const crowdInvalid = await request("island.benchmark", { enabled: true, actors: 9, motion: "walk", terrain: true });
+      if (crowdInvalid.ok !== false) throw new Error("Unbounded actor count accepted");
+      await request("island.benchmark", { enabled: true, actors: 8, motion: "frozen", terrain: true });
+      await Bun.sleep(1200);
+      const frozen = await request("island.stats", {}, "island.stats");
+      await Bun.sleep(800);
+      const frozenLater = await request("island.stats", {}, "island.stats");
+      if (frozen.actorCount !== 8 || JSON.stringify(frozen.actors) !== JSON.stringify(frozenLater.actors)) throw new Error("Frozen actors changed or eight slots failed");
+      await request("island.benchmark", { enabled: true, actors: 0, motion: "frozen", terrain: false });
+      await Bun.sleep(1200);
+      const empty = await request("island.stats", {}, "island.stats");
+      if (empty.actorCount !== 0 || empty.terrainEnabled !== 0) throw new Error("Empty-scene probe failed");
+      await request("island.benchmark", { enabled: false });
+      const crowdRestored = await request("island.stats", {}, "island.stats");
+      if (crowdRestored.benchmarkEnabled !== 0 || crowdRestored.x !== restoredState.x || crowdRestored.z !== restoredState.z || crowdRestored.messages !== restoredState.messages) throw new Error("Load test changed player state");
+      writeFileSync(`${fixture}/live-receipt.json`, JSON.stringify({ environment: "Azahar", initial, after, rejected, badCamera, loop, chat, motion, restored, restoredState, screenshotFrame: screenshot.frame,
+        crowdMoving, crowdInvalid, frozen, frozenLater, empty, crowdRestored }, null, 2));
       console.log(`PASS: authenticated TCP, JS replacement/rejection, live chat, remote movement and paired GPU screenshot. ${fixture}`);
     } finally { client.close(); }
   } else {

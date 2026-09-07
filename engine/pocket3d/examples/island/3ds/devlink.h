@@ -4,6 +4,14 @@
 #include "perf.h"
 #include "script.h"
 #include <citro3d.h>
+#define ISLAND_MAX_ACTORS 8
+typedef struct {
+  bool enabled, animated, terrain;
+  unsigned actors, generation;
+} IslandBenchmark;
+const IslandBenchmark *island_dev_benchmark(void);
+void island_dev_benchmark_stop(void);
+void island_dev_benchmark_actors(Island *const *, unsigned count);
 bool island_dev_init(void);
 void island_dev_shutdown(void);
 void island_dev_poll(const IslandSnapshot *, const PerfStats *, unsigned frame);

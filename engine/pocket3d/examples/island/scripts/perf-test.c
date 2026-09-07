@@ -30,5 +30,11 @@ int main(void) {
   assert(p.count == PERF_HISTORY);
   assert(p.history[(p.head + PERF_HISTORY - p.count) % PERF_HISTORY].avatar_vertices == 3);
   assert(p.latest.stage[PERF_GPU] == 0);
+  /* A workload change cannot relabel the last completed window. */
+  p.workload_generation = 7;
+  perf_reset_window(&p);
+  assert(p.latest.workload_generation == 0);
+  perf_record(&p, 1000, stages, true, 1, 32016, 27030, 1, true);
+  assert(p.latest.workload_generation == 7 && p.latest.avatar_vertices == 32016);
   puts("PASS: measured FPS, GPU sample alignment, stalls, p95, reset and bounded history");
 }
