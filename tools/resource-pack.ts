@@ -1,4 +1,4 @@
-/** Immutable indexed resources. All codecs and PICA pixel preparation run
+/** Immutable indexed resources. Image decoding and PICA pixel preparation run
  * during the desktop bake; the console only inflates a bounded record. */
 import {
   openSync,

@@ -65,6 +65,19 @@ test("desktop pack bake and actual native worker agree on bounds, CRC and owners
     offset.writeUInt32LE(0xffffffff, 88);
     writeFileSync(join(root, "offset.prp"), offset);
     writeFileSync(join(root, "truncated.prp"), bytes.subarray(0, 72));
+    const noise = Buffer.alloc(131072);
+    let seed = 1;
+    for (let n = 0; n < noise.length; n++) {
+      seed ^= seed << 13;
+      seed ^= seed >>> 17;
+      seed ^= seed << 5;
+      noise[n] = seed & 255;
+    }
+    const noisy = createResourcePack(join(root, "noise.prp"), 1);
+    noisy.add(noise, { width: 256, height: 256 });
+    noisy.finish();
+    const full = readFileSync(join(root, "noise.prp"));
+    expect(full.readUInt32LE(68)).toBeGreaterThan(131072);
     const binary = join(directory, "worker");
     const compile = Bun.spawnSync(
       [

@@ -80,6 +80,10 @@ int main(void) {
   assert(!asset_pack_submit(20, "valid", 5, 1));
   for (unsigned i = 0; i < 8; i++)
     asset_pack_release(held[i]);
+  submit(40, "noise", 0);
+  r = wait_for(40);
+  assert(!r.error && r.kind == 2 && r.length == 131072);
+  asset_pack_release(r.token);
   atomic_store(&slow, 1);
   u64 at = osGetTime();
   submit(30, "valid", 1);
