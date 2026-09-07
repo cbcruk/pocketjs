@@ -151,6 +151,16 @@ describe("published npm artifacts", () => {
       "engine/pocket3d/crates/pocket3d-gles2/src",
       "engine/pocket3d/crates/pocket3d-gles2/Cargo.toml",
       "engine/pocket3d/crates/pocket3d-gles2/Cargo.lock",
+      // The shared sampler and island are members of the shipped engine
+      // workspace. Include the example's embedded inputs as well as its
+      // manifest so the workspace remains buildable from the tarball.
+      "engine/pocket3d/crates/pocket3d-anim/src",
+      "engine/pocket3d/crates/pocket3d-anim/Cargo.toml",
+      "engine/pocket3d/examples/island/Cargo.toml",
+      "engine/pocket3d/examples/island/src",
+      "engine/pocket3d/examples/island/assets/mira.p3m",
+      "engine/pocket3d/examples/island/assets/island.p3m",
+      "engine/pocket3d/examples/island/assets/layout.rs",
       "engine/pocket3d/crates/pocket3d/src",
       "engine/pocket3d/crates/pocket3d/Cargo.toml",
       "engine/pocket3d/crates/pocket3d-cook/src",
@@ -175,6 +185,14 @@ describe("published npm artifacts", () => {
   test("framework tarball contains every locked native and standalone Pocket3D input", async () => {
     const files = packedFiles(root);
     expect(files).toEqual(expect.arrayContaining([
+      "engine/pocket3d/crates/pocket3d-anim/Cargo.toml",
+      "engine/pocket3d/crates/pocket3d-anim/src/lib.rs",
+      "engine/pocket3d/crates/pocket3d-anim/src/mesh.rs",
+      "engine/pocket3d/examples/island/Cargo.toml",
+      "engine/pocket3d/examples/island/src/lib.rs",
+      "engine/pocket3d/examples/island/assets/mira.p3m",
+      "engine/pocket3d/examples/island/assets/island.p3m",
+      "engine/pocket3d/examples/island/assets/layout.rs",
       "assets/brand/pocketjs-avatar-white-minimal.png",
       "apps/hero/app.tsx",
       "apps/iphone2g-demo/pocket.json",
