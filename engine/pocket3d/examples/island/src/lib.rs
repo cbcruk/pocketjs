@@ -11,7 +11,7 @@ use alloc::{
 use pocket3d_anim::glam::{Mat4, Quat, Vec3};
 use pocket3d_anim::{
     NodeTrs,
-    mesh::{ColorVertex, MeshAsset},
+    mesh::{ColorVertex, MeshAsset, SkinMatrix},
 };
 
 mod layout {
@@ -258,6 +258,7 @@ pub struct Island {
     previous_camera: Vec3,
     render_model: Mat4,
     pub render_camera: Vec3,
+    pub skin_palette: Vec<SkinMatrix>,
     blend: f32,
 }
 impl Default for Island {
@@ -303,6 +304,7 @@ impl Island {
             previous_camera: Vec3::new(0., 0., 1.6),
             render_model: Mat4::IDENTITY,
             render_camera: Vec3::ZERO,
+            skin_palette: vec![],
             locals,
             globals: vec![],
             scratch: vec![],
@@ -550,6 +552,37 @@ impl Island {
     /// Interpolate the two completed simulation poses without advancing state.
     /// The host supplies its remaining fixed-step fraction, bounded to [0, 1].
     pub fn present(&mut self, alpha: f32) {
+        self.present_pose(alpha);
+        self.actor.skin(
+            &self.globals,
+            self.render_model,
+            &mut self.scratch,
+            &mut self.character,
+        );
+        let position = self.render_model.w_axis.truncate();
+        let y = Self::ground_height(position.x, position.z) + 0.002;
+        for i in 0..32 {
+            let a = i as f32 * core::f32::consts::TAU / 32.0;
+            let b = (i + 1) as f32 * core::f32::consts::TAU / 32.0;
+            self.character.push(ColorVertex {
+                position: [position.x, y, position.z],
+                color: [0.13, 0.19, 0.10, 0.19],
+            });
+            for angle in [a, b] {
+                self.character.push(ColorVertex {
+                    position: [
+                        position.x + 0.34 * libm::cosf(angle),
+                        y,
+                        position.z + 0.22 * libm::sinf(angle),
+                    ],
+                    color: [0.13, 0.19, 0.10, 0.0],
+                });
+            }
+        }
+    }
+    /// GPU backends evaluate only the interpolated skeleton and matrix palette.
+    /// The immutable mesh and index buffers remain resident on the device.
+    pub fn present_pose(&mut self, alpha: f32) {
         let alpha = if alpha.is_finite() {
             alpha.clamp(0., 1.)
         } else {
@@ -584,33 +617,12 @@ impl Island {
             Quat::from_rotation_y(self.previous_yaw).slerp(Quat::from_rotation_y(self.yaw), alpha);
         self.render_model = Mat4::from_rotation_translation(rotation, position);
         self.render_camera = self.previous_camera.lerp(self.camera, alpha);
-        self.actor.skin(
-            &self.globals,
-            self.render_model,
-            &mut self.scratch,
-            &mut self.character,
-        );
-        let y = Self::ground_height(position.x, position.z) + 0.002;
-        for i in 0..32 {
-            let a = i as f32 * core::f32::consts::TAU / 32.0;
-            let b = (i + 1) as f32 * core::f32::consts::TAU / 32.0;
-            self.character.push(ColorVertex {
-                position: [position.x, y, position.z],
-                color: [0.13, 0.19, 0.10, 0.19],
-            });
-            for angle in [a, b] {
-                self.character.push(ColorVertex {
-                    position: [
-                        position.x + 0.34 * libm::cosf(angle),
-                        y,
-                        position.z + 0.22 * libm::sinf(angle),
-                    ],
-                    color: [0.13, 0.19, 0.10, 0.0],
-                });
-            }
-        }
-        // The shadow is at the feet, so drawing it after the avatar remains
-        // depth-correct while avoiding a second allocation for the mesh body.
+        self.actor
+            .skin_matrices(&self.globals, self.render_model, &mut self.skin_palette);
+    }
+    pub fn shadow_position(&self) -> Vec3 {
+        let p = self.render_model.w_axis.truncate();
+        Vec3::new(p.x, Self::ground_height(p.x, p.z) + 0.002, p.z)
     }
     /// Head anchor follows the sampled skeleton (including sitting and waving).
     pub fn bubble_anchor(&self) -> Vec3 {
@@ -628,6 +640,78 @@ impl Island {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn resident_gpu_skin_matches_cpu_geometry_lighting_and_visibility() {
+        use pocket3d_anim::glam::Vec4;
+        for (x, z) in [(0.0, 1.6), (1.2, -1.8)] {
+            let mut s = Island::new().replica(x, z, 0.27);
+            s.character.clear(); // Ignore the constructor's initial portable preview.
+            let mesh = s.actor.rigid_mesh().unwrap();
+            assert_eq!(core::mem::size_of::<pocket3d_anim::mesh::RigidVertex>(), 40);
+            assert_eq!(core::mem::size_of::<pocket3d_anim::mesh::RigidRange>(), 16);
+            assert_eq!(core::mem::size_of::<SkinMatrix>(), 48);
+            let mut scratch = vec![];
+            let mut expected = vec![];
+            for tick in 0..180 {
+                s.set_expression(tick / 23 % 7);
+                s.advance(Input {
+                    x: if tick < 65 { 0.5 } else { 0. },
+                    z: 0.2,
+                    run: tick > 30 && tick < 65,
+                    wave: tick == 70,
+                    sit: tick == 110 || tick == 150,
+                    ..Input::default()
+                });
+                s.present_pose(0.37);
+                assert!(
+                    s.character.is_empty(),
+                    "GPU presentation must not build a CPU vertex stream"
+                );
+                s.actor
+                    .skin(&s.globals, s.render_model, &mut scratch, &mut expected);
+                let mut offset = 0;
+                for range in &mesh.ranges {
+                    if range
+                        .joints
+                        .iter()
+                        .all(|&j| s.skin_palette[j as usize].rows == [[0.; 4]; 3])
+                    {
+                        continue;
+                    }
+                    for &index in
+                        &mesh.indices[range.first as usize..(range.first + range.count) as usize]
+                    {
+                        let v = mesh.vertices[index as usize];
+                        let m = &s.skin_palette[v.matrix_row as usize / 3].rows;
+                        let p = Vec3::from_array(v.position).extend(1.);
+                        let n = Vec3::from_array(v.normal).extend(0.);
+                        let row = m.map(Vec4::from_array);
+                        let position = Vec3::new(row[0].dot(p), row[1].dot(p), row[2].dot(p));
+                        let normal = Vec3::new(row[0].dot(n), row[1].dot(n), row[2].dot(n))
+                            .normalize_or_zero();
+                        let light = 0.69
+                            + 0.31 * normal.dot(Vec3::new(-0.42, 0.82, 0.38).normalize()).max(0.);
+                        let color = Vec3::from_array(v.color) * libm::sqrtf(light);
+                        assert!(
+                            position.distance(Vec3::from_array(expected[offset].position))
+                                < 0.00001
+                        );
+                        assert!(
+                            color.distance(Vec3::from_array(
+                                expected[offset].color[..3].try_into().unwrap()
+                            )) < 0.00001
+                        );
+                        offset += 1;
+                    }
+                }
+                assert_eq!(
+                    offset,
+                    expected.len(),
+                    "GPU ranges must omit exactly the inactive face triangles"
+                );
+            }
+        }
+    }
     #[test]
     fn replicas_share_assets_and_keep_independent_motion_and_chat() {
         let mut original = Island::new();

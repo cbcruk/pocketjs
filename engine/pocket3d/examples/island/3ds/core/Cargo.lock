@@ -30,6 +30,7 @@ name = "pocket-island-3ds"
 version = "0.1.0"
 dependencies = [
  "pocket-island",
+ "pocket3d-anim",
 ]
 
 [[package]]

@@ -6,7 +6,7 @@
 #include <citro3d.h>
 #define ISLAND_MAX_ACTORS 8
 typedef struct {
-  bool enabled, animated, terrain;
+  bool enabled, animated, terrain, panel;
   unsigned actors, generation;
 } IslandBenchmark;
 const IslandBenchmark *island_dev_benchmark(void);

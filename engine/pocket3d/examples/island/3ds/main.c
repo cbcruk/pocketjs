@@ -1,4 +1,5 @@
 #include "color_shbin.h"
+#include "skin_shbin.h"
 #include "island.h"
 #include "pocket3d.h"
 #include "perf.h"
@@ -14,10 +15,10 @@ static C3D_RenderTarget *top, *bottom;
 static C2D_TextBuf textbuf;
 static Island *island;
 static IslandSnapshot state;
-static P3D_Mesh terrain, avatar[2][ISLAND_MAX_ACTORS];
+static P3D_Mesh terrain, shadow;
+static P3D_SkinMesh avatar;
 static Island *replicas[ISLAND_MAX_ACTORS];
-static unsigned avatar_slots, benchmark_generation, benchmark_tick, pose_version;
-static unsigned uploaded_version[2][ISLAND_MAX_ACTORS];
+static unsigned benchmark_generation, benchmark_tick;
 static const IslandBenchmark *benchmark;
 #ifndef ISLAND_BUILD_ID
 #define ISLAND_BUILD_ID "unknown"
@@ -56,7 +57,7 @@ static void perf_save(void) {
             r->max_ms, r->stage[PERF_UPDATE], r->stage[PERF_UPLOAD],
             r->stage[PERF_DRAW_UI], r->stage[PERF_END], r->stage[PERF_WAIT],
             r->stage[PERF_GPU], r->steps, (unsigned)r->avatar_vertices,
-            (unsigned)r->terrain_vertices, (unsigned)r->action, (unsigned)r->panel, r->workload_generation);
+            (unsigned)r->terrain_vertices, (unsigned)r->action, (unsigned)r->panel, (unsigned)r->workload_generation);
   }
   bool ok = !ferror(f);
   if (fclose(f)) ok = false;
@@ -244,7 +245,7 @@ static void perf_ui(void) {
   text(15, 53, .63, mint, row);
   snprintf(row, sizeof row, "p95 %.1f ms    max %.1f ms", p->p95_ms, p->max_ms);
   text(15, 80, .43, ink, row);
-  const char *labels[] = {"Update + skin", "Vertex upload", "3D + UI submit",
+  const char *labels[] = {"CPU update + pose", "Draw preparation", "3D + UI submit",
                           "Frame end / flush", "GPU + vblank wait", "GPU queue (previous)"};
   for (int i = 0; i < PERF_STAGES; i++) {
     text(15, 104 + i * 13, .36, muted, labels[i]);
@@ -264,7 +265,7 @@ static void bottom_ui(void) {
   C3D_DepthTest(false, GPU_ALWAYS, GPU_WRITE_COLOR);
   C3D_AlphaBlend(GPU_BLEND_ADD, GPU_BLEND_ADD, GPU_SRC_ALPHA,
                  GPU_ONE_MINUS_SRC_ALPHA, GPU_ONE, GPU_ONE_MINUS_SRC_ALPHA);
-  if (perf_visible || benchmark->enabled) {
+  if (perf_visible || (benchmark->enabled && benchmark->panel)) {
     perf_ui();
     return;
   }
@@ -393,14 +394,24 @@ static void benchmark_step(void) {
                  (z + .3f * sinf(phase) - actor.z) * 5.f, 0);
   }
 }
-/* Called after FrameBegin retires every GPU reference to the old slots. */
-static bool avatar_slots_resize(unsigned count) {
-  for (unsigned i = count; i < avatar_slots; i++) for (unsigned slot = 0; slot < 2; slot++)
-    p3d_mesh_free(&avatar[slot][i]);
-  for (unsigned i = avatar_slots; i < count; i++) for (unsigned slot = 0; slot < 2; slot++)
-    if (!p3d_mesh_create(&avatar[slot][i], island_vertex_capacity(island))) return false;
-  avatar_slots = count;
-  return true;
+/* The same immutable mesh and shadow buffers serve every actor. */
+static bool avatar_create(void) {
+  IslandSkinMesh *source = island_skin_new(island);
+  if (!source) return false;
+  P3D_SkinSource data;
+  island_skin_source(source, &data);
+  bool ok = p3d_skin_create(&avatar, &data);
+  island_skin_free(source);
+  if (!ok) return false;
+  P3D_ColorVertex vertices[96];
+  for (unsigned i = 0; i < 32; i++) {
+    vertices[i * 3] = (P3D_ColorVertex){{0, 0, 0}, {.13f, .19f, .10f, .19f}};
+    for (unsigned j = 0; j < 2; j++) {
+      float a = (i + j) * 2.f * M_PI / 32.f;
+      vertices[i * 3 + j + 1] = (P3D_ColorVertex){{.34f * cosf(a), 0, .22f * sinf(a)}, {.13f, .19f, .10f, 0}};
+    }
+  }
+  return p3d_mesh_create(&shadow, 96) && p3d_mesh_upload(&shadow, vertices, 96);
 }
 int main(void) {
   // Match the PocketJS host's normal New 3DS CPU/L2 mode; Old 3DS ignores it.
@@ -428,7 +439,7 @@ int main(void) {
     corner_y[corner * 7 + j] = sinf(a);
   }
   island = island_new();
-  if (!island || !p3d_init(color_shbin, color_shbin_size))
+  if (!island || !p3d_init(color_shbin, color_shbin_size) || !p3d_skin_init(skin_shbin, skin_shbin_size))
     return 3;
   if (!island_dev_init()) return 7;
   benchmark = island_dev_benchmark();
@@ -437,7 +448,7 @@ int main(void) {
 #endif
   uint32_t n;
   const P3D_ColorVertex *v = island_vertices(island, true, &n);
-  if (!p3d_mesh_create(&terrain, n) || !p3d_mesh_upload(&terrain, v, n) || !avatar_slots_resize(1))
+  if (!p3d_mesh_create(&terrain, n) || !p3d_mesh_upload(&terrain, v, n) || !avatar_create())
     return 4;
 #ifdef ISLAND_CAPTURE
   mkdir("sdmc:/pocket-island", 0777);
@@ -581,7 +592,6 @@ int main(void) {
     unsigned actor_count = benchmark->enabled ? benchmark->actors : 1;
     bool animated = !benchmark->enabled || benchmark->animated;
     if (animated || benchmark_changed) {
-      pose_version++;
       for (unsigned i = 0; i < actor_count; i++)
         island_present(benchmark->enabled ? replicas[i] : island, animated ? alpha : 1.f);
     }
@@ -605,20 +615,17 @@ int main(void) {
     // Read only after FrameBegin retires the previous GPU queue. This is
     // overlapping GPU work, not another component of the CPU frame total.
     timing[PERF_GPU] = C3D_GetDrawingTime();
-    if (!avatar_slots_resize(actor_count)) break;
     stage_start = svcGetSystemTick();
     n = 0;
-    bool uploaded = true;
+    const P3D_SkinMatrix *palettes[ISLAND_MAX_ACTORS];
+    uint32_t visibility[ISLAND_MAX_ACTORS];
     for (unsigned i = 0; i < actor_count; i++) {
       uint32_t count;
-      v = island_vertices(benchmark->enabled ? replicas[i] : island, false, &count);
-      if (uploaded_version[frame % 2][i] != pose_version) {
-        uploaded &= p3d_mesh_upload(&avatar[frame % 2][i], v, count);
-        uploaded_version[frame % 2][i] = pose_version;
-      }
-      n += count;
+      palettes[i] = island_palette(benchmark->enabled ? replicas[i] : island, &count);
+      if (count != avatar.joint_count) return 9;
+      visibility[i] = p3d_skin_visible(palettes[i], count);
+      n += p3d_skin_count(&avatar, visibility[i]) + 96;
     }
-    if (!uploaded) break;
     timing[PERF_UPLOAD] = elapsed_ms(stage_start, svcGetSystemTick());
     stage_start = svcGetSystemTick();
     C2D_TextBufClear(textbuf);
@@ -638,7 +645,18 @@ int main(void) {
     p3d_begin(&vp);
     bool draw_terrain = !benchmark->enabled || benchmark->terrain;
     if (draw_terrain) p3d_draw(&terrain);
-    for (unsigned i = 0; i < actor_count; i++) p3d_draw(&avatar[frame % 2][i]);
+    for (unsigned i = 0; i < actor_count; i++) {
+      float p[3];
+      island_shadow(benchmark->enabled ? replicas[i] : island, p);
+      C3D_Mtx transform, shadow_vp;
+      Mtx_Identity(&transform);
+      Mtx_Translate(&transform, p[0], p[1], p[2], true);
+      Mtx_Multiply(&shadow_vp, &vp, &transform);
+      p3d_begin(&shadow_vp);
+      p3d_draw(&shadow);
+    }
+    p3d_skin_begin(&vp);
+    for (unsigned i = 0; i < actor_count; i++) p3d_skin_draw(&avatar, palettes[i], visibility[i]);
     top_ui();
     bottom_ui();
     C2D_Flush();
@@ -649,7 +667,7 @@ int main(void) {
     timing[PERF_END] = elapsed_ms(stage_start, end);
     if (perf_previous_end)
       perf_record(&perf, elapsed_ms(perf_previous_end, end), timing, frame > 0,
-                  steps, n, draw_terrain ? terrain.count : 0, state.action, perf_visible || benchmark->enabled);
+                  steps, n, draw_terrain ? terrain.count : 0, state.action, perf_visible || (benchmark->enabled && benchmark->panel));
     perf_previous_end = end;
     frame++;
     if (island_dev_capture(top, bottom, frame)) {
@@ -693,9 +711,9 @@ int main(void) {
   linearFree(capture);
 #endif
   p3d_mesh_free(&terrain);
+  p3d_mesh_free(&shadow);
+  p3d_skin_free(&avatar);
   for (unsigned i = 0; i < ISLAND_MAX_ACTORS; i++) {
-    p3d_mesh_free(&avatar[0][i]);
-    p3d_mesh_free(&avatar[1][i]);
     island_free(replicas[i]);
   }
   p3d_exit();

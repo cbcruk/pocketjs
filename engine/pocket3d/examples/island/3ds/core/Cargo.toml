@@ -8,6 +8,7 @@ crate-type = ["staticlib"]
 [workspace]
 [dependencies]
 pocket-island = { path = "../.." }
+pocket3d-anim = { path = "../../../../crates/pocket3d-anim" }
 [profile.release]
 opt-level = 3
 lto = true

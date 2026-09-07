@@ -6,6 +6,7 @@ use core::{
     ffi::c_void,
 };
 use pocket_island::{Input, Island};
+use pocket3d_anim::mesh::{RigidMesh, RigidRange, RigidVertex, SkinMatrix};
 unsafe extern "C" {
     fn memalign(align: usize, size: usize) -> *mut c_void;
     fn free(p: *mut c_void);
@@ -56,8 +57,57 @@ pub unsafe extern "C" fn island_replica(
     Box::into_raw(Box::new(unsafe { &*s }.replica(x, z, phase)))
 }
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn island_vertex_capacity(s: *const Island) -> u32 {
-    (unsafe { &*s }.actor.indices.len() + 96) as u32
+pub unsafe extern "C" fn island_skin_new(s: *const Island) -> *mut RigidMesh {
+    match unsafe { &*s }.actor.rigid_mesh() {
+        Ok(mesh) => Box::into_raw(Box::new(mesh)),
+        Err(_) => core::ptr::null_mut(),
+    }
+}
+#[repr(C)]
+pub struct SkinSource {
+    vertices: *const RigidVertex,
+    indices: *const u16,
+    ranges: *const RigidRange,
+    vertex_count: u32,
+    index_count: u32,
+    range_count: u32,
+    joint_count: u32,
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn island_skin_source(m: *const RigidMesh, out: *mut SkinSource) {
+    let m = unsafe { &*m };
+    unsafe {
+        *out = SkinSource {
+            vertices: m.vertices.as_ptr(),
+            indices: m.indices.as_ptr(),
+            ranges: m.ranges.as_ptr(),
+            vertex_count: m.vertices.len() as u32,
+            index_count: m.indices.len() as u32,
+            range_count: m.ranges.len() as u32,
+            joint_count: m.joints as u32,
+        };
+    }
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn island_skin_free(m: *mut RigidMesh) {
+    if !m.is_null() {
+        drop(unsafe { Box::from_raw(m) });
+    }
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn island_palette(s: *const Island, count: *mut u32) -> *const SkinMatrix {
+    let p = &unsafe { &*s }.skin_palette;
+    unsafe {
+        *count = p.len() as u32;
+    }
+    p.as_ptr()
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn island_shadow(s: *const Island, out: *mut f32) {
+    let p = unsafe { &*s }.shadow_position().to_array();
+    unsafe {
+        core::ptr::copy_nonoverlapping(p.as_ptr(), out, 3);
+    }
 }
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn island_free(s: *mut Island) {
@@ -188,5 +238,5 @@ pub unsafe extern "C" fn island_message(
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn island_present(s: *mut Island, alpha: f32) {
-    unsafe { (*s).present(alpha) }
+    unsafe { (*s).present_pose(alpha) }
 }

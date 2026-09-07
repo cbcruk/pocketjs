@@ -181,6 +181,8 @@ static void stats(const PerfStats *p, const IslandSnapshot *s, unsigned frame, c
   JSValue obj = response("island.stats", id);
   string(obj, "build", ISLAND_BUILD_ID);
   number(obj, "speedupRequested", 1);
+  string(obj, "skinning", "gpu-rigid-indexed");
+  number(obj, "dynamicVertexUploadBytes", 0);
   number(obj, "benchmarkEnabled", benchmark.enabled);
   number(obj, "benchmarkGeneration", benchmark.generation);
   number(obj, "measuredBenchmarkGeneration", p->latest.workload_generation);
@@ -254,12 +256,15 @@ static void control(char *line, size_t length, const IslandSnapshot *s, const Pe
     if (ok) command_ready = true;
     reply(id, ok, ok ? "Event queued" : "Invalid event or command pending");
   } else if (!strcmp(type, "island.benchmark")) {
-    IslandBenchmark candidate = {.generation = benchmark.generation + 1};
+    IslandBenchmark candidate = {.panel = true, .generation = benchmark.generation + 1};
     double actors = 0;
     char motion[16];
     bool ok = bool_property(obj, "enabled", &candidate.enabled) && !input.left;
     if (ok && candidate.enabled) {
-      ok = numeric_property(obj, "actors", &actors, 0, ISLAND_MAX_ACTORS) && actors == (unsigned)actors &&
+      JSValue panel = JS_GetPropertyStr(json, obj, "panel");
+      bool panel_ok = JS_IsUndefined(panel) || bool_property(obj, "panel", &candidate.panel);
+      JS_FreeValue(json, panel);
+      ok = panel_ok && numeric_property(obj, "actors", &actors, 0, ISLAND_MAX_ACTORS) && actors == (unsigned)actors &&
         bool_property(obj, "terrain", &candidate.terrain) && text_property(obj, "motion", motion, sizeof motion) &&
         (!strcmp(motion, "walk") || !strcmp(motion, "frozen"));
       if (ok) {

@@ -16,7 +16,7 @@ CFLAGS += -DJS_NO_NAN_BOXING -DPOCKETJS_HOST_ABI=0 -DPOCKETJS_TARGET_ID=\"p3d-is
 ifeq ($(FLAVOR),capture)
 CFLAGS += -DISLAND_CAPTURE
 endif
-OBJECTS := $(BUILD)/main.o $(BUILD)/pocket3d.o $(BUILD)/color_shbin.o $(BUILD)/script.o $(BUILD)/devlink.o $(BUILD)/devserver.o $(BUILD)/dev_protocol.o $(BUILD)/soc.o $(BUILD)/app_js.o
+OBJECTS := $(BUILD)/main.o $(BUILD)/pocket3d.o $(BUILD)/color_shbin.o $(BUILD)/skin_shbin.o $(BUILD)/script.o $(BUILD)/devlink.o $(BUILD)/devserver.o $(BUILD)/dev_protocol.o $(BUILD)/soc.o $(BUILD)/app_js.o
 all: $(BUILD)/pocket-island.3dsx
 $(BUILD):
 	mkdir -p $@
@@ -25,6 +25,12 @@ $(BUILD)/color.shbin: $(BACKEND)/color.v.pica | $(BUILD)
 $(BUILD)/color_shbin.s $(BUILD)/color_shbin.h &: $(BUILD)/color.shbin
 	cd $(BUILD) && $(DEVKITPRO)/tools/bin/bin2s -a 4 -H color_shbin.h color.shbin > color_shbin.s
 $(BUILD)/color_shbin.o: $(BUILD)/color_shbin.s
+	$(CC) $(ARCH) -c $< -o $@
+$(BUILD)/skin.shbin: $(BACKEND)/skin.v.pica | $(BUILD)
+	$(DEVKITPRO)/tools/bin/picasso -o $@ $<
+$(BUILD)/skin_shbin.s $(BUILD)/skin_shbin.h &: $(BUILD)/skin.shbin
+	cd $(BUILD) && $(DEVKITPRO)/tools/bin/bin2s -a 4 -H skin_shbin.h skin.shbin > skin_shbin.s
+$(BUILD)/skin_shbin.o: $(BUILD)/skin_shbin.s
 	$(CC) $(ARCH) -c $< -o $@
 $(BUILD)/app_js.s $(BUILD)/app_js.h &: $(SOURCE)/../app.js | $(BUILD)
 	cd $(BUILD) && $(DEVKITPRO)/tools/bin/bin2s -a 4 -H app_js.h $< > app_js.s
@@ -40,7 +46,7 @@ $(BUILD)/dev_protocol.o: $(HOST)/src/dev_protocol.c $(HOST)/src/dev_protocol.h |
 	$(CC) $(CFLAGS) -c $< -o $@
 $(BUILD)/soc.o: $(HOST)/src/soc.c $(HOST)/src/soc.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
-$(BUILD)/main.o: $(SOURCE)/main.c $(SOURCE)/island.h $(SOURCE)/perf.h $(SOURCE)/devlink.h $(BACKEND)/pocket3d.h $(BUILD)/color_shbin.h FORCE
+$(BUILD)/main.o: $(SOURCE)/main.c $(SOURCE)/island.h $(SOURCE)/perf.h $(SOURCE)/devlink.h $(BACKEND)/pocket3d.h $(BUILD)/color_shbin.h $(BUILD)/skin_shbin.h FORCE
 	$(CC) $(CFLAGS) -c $< -o $@
 $(BUILD)/pocket3d.o: $(BACKEND)/pocket3d.c $(BACKEND)/pocket3d.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
