@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { OFFLOAD, type OffloadRequest, type OffloadProviderReply, type OffloadImage, type OffloadMesh } from "../contracts/spec/offload.ts";
 import { OffloadDecoder, encodeOffloadRecord, encodeOffloadImage, encodeOffloadMesh } from "./offload-wire.ts";
+export { prepareMesh } from "./offload-wire.ts";
 export type { OffloadImage, OffloadMesh } from "../contracts/spec/offload.ts";
 
 export function connectOffloadProvider(options: {

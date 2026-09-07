@@ -108,3 +108,37 @@ export function encodeOffloadMesh(id: number, mesh: OffloadMesh): Buffer {
   bytes.set(mesh.bytes, 12);
   return bytes;
 }
+
+/** Host-only packing of already clipped/tessellated geometry in logical units.
+ * Topology and style stay with the capability; the wire layout stays here. */
+export function prepareMesh(input: {
+  width: number;
+  height: number;
+  vertices: readonly (readonly [number, number])[];
+  triangles: readonly (readonly [number, number, number, number])[];
+}): OffloadMesh {
+  const { width, height, vertices, triangles } = input;
+  if (![width, height].every(n => Number.isInteger(n) && n > 0 && n <= 4095) ||
+      vertices.length > OFFLOAD_MESH.maxVertices || triangles.length > OFFLOAD_MESH.maxTriangles)
+    throw new Error("Invalid prepared mesh dimensions or counts");
+  const bytes = new Uint8Array(16 + vertices.length * 4 + triangles.length * 10);
+  const view = new DataView(bytes.buffer);
+  view.setUint32(0, 0x31484d50, true);
+  for (const [at, n] of [[4, width], [6, height], [8, vertices.length], [10, triangles.length]]) view.setUint16(at, n, true);
+  for (let i = 0; i < vertices.length; i++) {
+    const [x,y] = vertices[i];
+    if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0 || x > width || y > height) throw new Error("Invalid prepared mesh coordinate");
+    view.setUint16(16 + i * 4, Math.round(x * 16), true); view.setUint16(18 + i * 4, Math.round(y * 16), true);
+  }
+  for (let i = 0; i < triangles.length; i++) {
+    const triangle = triangles[i], at = 16 + vertices.length * 4 + i * 10;
+    if (!Number.isInteger(triangle[3]) || triangle[3] < 0 || triangle[3] > 0xffffffff) throw new Error("Invalid prepared mesh color");
+    for (let j = 0; j < 3; j++) {
+      const index = triangle[j];
+      if (!Number.isInteger(index) || index < 0 || index >= vertices.length) throw new Error("Invalid prepared mesh index");
+      view.setUint16(at + j * 2, index, true);
+    }
+    view.setUint32(at + 6, triangle[3], true);
+  }
+  return { format: "mesh2d-v1", bytes };
+}

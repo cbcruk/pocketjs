@@ -3,7 +3,7 @@ import { createRoot } from "solid-js";
 import { createOffloadClient } from "../framework/src/offload.ts";
 import { createOffloadMeshCollection } from "../framework/src/resource-offload.ts";
 import { createResourceRuntime, createResourceView } from "../framework/src/resource-view.ts";
-import { encodeOffloadMesh, validateMesh } from "../tools/offload-wire.ts";
+import { encodeOffloadMesh, validateMesh, prepareMesh } from "../tools/offload-wire.ts";
 import { dispatchOffload } from "../tools/offload-provider.ts";
 const mesh = () => {
   const bytes = new Uint8Array(16);
@@ -133,4 +133,12 @@ test("throwing response callbacks cannot strand native mesh staging", () => {
   const id = client.requestMesh("mesh", "{}", () => { throw new Error("consumer failed"); });
   client.step(); replies.push(JSON.stringify({ id, mesh: { token: 8, width: 256, height: 256, bytes: 16 } })); client.step();
   expect(released).toEqual([8]); expect(client.pending()).toBe(0);
+});
+
+test("provider mesh packing quantizes logical units and rejects narrowing overflow", () => {
+  const input={width:256,height:256,vertices:[[0,0],[256,0],[.1,256]] as const,triangles:[[0,1,2,0xff123456]] as const};
+  const bytes=prepareMesh(input).bytes;expect(validateMesh(bytes).bytes).toBe(38);expect(new DataView(bytes.buffer).getUint16(24,true)).toBe(2);
+  for(const index of [-1,.5,3,65536,NaN])expect(()=>prepareMesh({...input,triangles:[[0,1,index,0xff123456]]})).toThrow();
+  for(const color of [-1,.5,0x100000000,Infinity])expect(()=>prepareMesh({...input,triangles:[[0,1,2,color]]})).toThrow();
+  for(const x of [-1,257,Infinity,NaN])expect(()=>prepareMesh({...input,vertices:[[x,0]]})).toThrow();
 });

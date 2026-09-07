@@ -211,3 +211,9 @@ commands after bounded transformation and clipping. PBF parsing, topology,
 style selection and triangulation remain provider responsibilities. See
 [prepared geometry resources](RESOURCES.md#prepared-2d-geometry) for rendering
 and cache ownership.
+
+Providers can use `prepareMesh` from `@pocketjs/framework/offload/provider` to
+pack already tessellated geometry. Vertices use logical coordinates; triangle
+records contain three indices and an unsigned ABGR color. The helper checks
+bounds before integer conversion and quantizes positions to 1/16 pixel, so
+applications do not duplicate the binary header or index encoding.
