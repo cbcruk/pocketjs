@@ -69,7 +69,7 @@
  * batches before submitting either one: the GPU reads this arena
  * asynchronously, so resetting it between screens would corrupt the first.
  */
-#define MAX_VERTICES 32768u
+#define MAX_VERTICES 65536u
 #define MAX_COMMANDS 2048u
 #define MAX_CLIP_DEPTH 64u
 #define MAX_SURFACES 2u

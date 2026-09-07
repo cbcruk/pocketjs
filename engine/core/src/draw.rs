@@ -2822,6 +2822,14 @@ fn paint_mesh(
                 ..empty
             };
         }
+        if cur[..3].iter().all(|p| p.x < clip.x0)
+            || cur[..3].iter().all(|p| p.x > clip.x1)
+            || cur[..3].iter().all(|p| p.y < clip.y0)
+            || cur[..3].iter().all(|p| p.y > clip.y1) { continue; }
+        if cur[..3].iter().all(|p| p.x >= clip.x0 && p.x <= clip.x1 && p.y >= clip.y0 && p.y <= clip.y1) {
+            emit_tri(dl, &cur[0], &cur[1], &cur[2], clip, screen);
+            continue;
+        }
         let mut count = 3;
         for (axis, bound, le) in [
             (0, clip.x0, false),
