@@ -124,21 +124,23 @@
     }
   ],
   "validation": {
-    "portable_tests": 9,
+    "portable_tests": 10,
     "desktop_pocket3d_tests": 21,
     "clippy": "pass",
     "glb_clips": 18,
     "gpu_capture": "Azahar 2125.1.2 software rasterizer, native 400x240 + 320x240",
-    "hardware": "user reports low frame rate in original build; numerical console measurement pending",
+    "hardware": "original instrumented build: 8.92 FPS over 851 frames with panel closed; optimized build remeasurement pending",
     "network": "local only",
     "performance_stats": "pass: native C FPS, percentile, stall, reset and bounded-history tests",
-    "performance_menu": "pass: Azahar native chord open/hold/close/release, GPU readback and SD export"
+    "performance_menu": "pass: Azahar native chord open/hold/close/release, GPU readback and SD export",
+    "runtime_wire_tests": 12,
+    "live_devlink": "pass: Azahar authenticated TCP, guest-package rejection, live JS replacement/rejection/timeout, chat and position preservation, remote input, paired GPU screenshot"
   },
   "sha256": {
-    "release_3dsx": "8237f7a55c98dfd3f71b0af246f8f7f5a768284183188402bf3b18f2618d086a",
-    "capture_3dsx": "3c756da4bd0eb0efb757818c212db990a754b7e864a64e6335ed30af07c2e937",
+    "release_3dsx": "f93ba2c11a2aeb3e3235da67ddfcbc839754431f237bdb620f5c8a6810cd9e0a",
+    "capture_3dsx": "00293de201ba77ea53298d96de77e26a08328a38fd67bd72f47f1ff42984b106",
     "mira_glb": "90a88b990576a3d182106c53bc6e207a5fcd7ebebdd2aff69af620391b1ab331",
     "mira_p3m": "b7fe7a39580718ec116643c0b5e565a2fe4bf42f4cef0f629ba29602e21b145e"
   },
-  "source_revision": "71e89695638d9f5d8530453528d2c1a048a99067"
+  "source_revision": "9a212c9229d6dd8039740eb09db14c2f38802467"
 }
