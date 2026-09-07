@@ -127,3 +127,22 @@ action — a receipt that a gesture interaction completed on the hardware.
 `dist/ipodtouch4/device-frame.png`.
 
 User application icons use **opaque 57×57 and 114×114 artwork**. SpringBoard applies the rounded mask and shadow; `UIPrerenderedIcon` suppresses the stock gloss. The System application path uses a precomposed transparent mask instead. Baking that mask into a User icon adds an inset rim under the native mask. Icon filenames include the artwork revision so an update selects a fresh SpringBoard cache entry.
+
+## Versions for manual store publication
+
+The build reads **`version` from the app's `pocket.json`** and writes it to
+`CFBundleShortVersionString`. This target requires a numeric `MAJOR.MINOR.PATCH`
+product version. **`POCKETJS_IOS_BUILD_NUMBER` supplies `CFBundleVersion`** as a
+positive integer; it defaults to `1` for local development. Increase the counter
+for every rebuild that will be published, including revisions of the same product
+version:
+
+```sh
+POCKETJS_IOS_BUILD_NUMBER=1 bun ipodtouch4 build
+```
+
+The generated `build-receipt.json` includes `productVersion` and
+`nativeBuildNumber`. Its file hashes cover the generated Info.plist and executable;
+the build ID includes the rendered Info.plist. Changing the native build number
+therefore changes both the receipt and the build ID. The same metadata flow applies
+to built-in and external application descriptors. No application CI is required.

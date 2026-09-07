@@ -208,6 +208,9 @@ interface BuildReceipt {
   readonly target: string;
   readonly hostAbi: number;
   readonly deploymentTarget: string;
+  /** Absent in older development receipts. New builds stamp both native fields. */
+  readonly productVersion?: string;
+  readonly nativeBuildNumber?: string;
   readonly files: Readonly<Record<string, string>>;
   /** The plan's presented surface; absent in receipts written before the
    *  landscape viewport existed (those are the portrait Clear build). */
@@ -329,7 +332,9 @@ export function buildReceiptsMatch(left: BuildReceipt, right: BuildReceipt): boo
     left.bundleId !== right.bundleId ||
     left.target !== right.target ||
     left.hostAbi !== right.hostAbi ||
-    left.deploymentTarget !== right.deploymentTarget
+    left.deploymentTarget !== right.deploymentTarget ||
+    left.productVersion !== right.productVersion ||
+    left.nativeBuildNumber !== right.nativeBuildNumber
   ) return false;
   const leftFiles = Object.entries(left.files).sort(([a], [b]) => a.localeCompare(b));
   const rightFiles = Object.entries(right.files).sort(([a], [b]) => a.localeCompare(b));
@@ -359,20 +364,41 @@ function guestDirectory(): string {
   return join(REPOSITORY, `dist/ipodtouch4/${APP.id}/guest`);
 }
 
-/**
- * hosts/ipodtouch4/Info.plist is written for Pocket Clear; every other app
- * takes the same plist with its own identity substituted. For Clear the
- * substitution is the identity, so its bundle stays byte-identical.
- */
-function renderInfoPlist(): string {
-  const clear = IPODTOUCH4_APPS.clear;
-  const source = readFileSync(join(REPOSITORY, "hosts/ipodtouch4/Info.plist"), "utf8");
-  return source
-    .replaceAll(`<string>${clear.bundleId}.launch</string>`, `<string>${APP.bundleId}.launch</string>`)
-    .replaceAll(`<string>${clear.bundleId}</string>`, `<string>${APP.bundleId}</string>`)
-    .replaceAll(`<string>${clear.title}</string>`, `<string>${APP.title}</string>`)
-    .replaceAll(`<string>${clear.executable}</string>`, `<string>${APP.executable}</string>`)
-    .replaceAll(`<string>${clear.scheme}</string>`, `<string>${APP.scheme}</string>`);
+export interface IOSAppVersion {
+  readonly productVersion: string;
+  readonly buildNumber: string;
+}
+
+/** Legacy iOS uses a numeric product version and a separate manual build counter. */
+export function resolveIOSAppVersion(version: unknown, buildNumber = "1"): IOSAppVersion {
+  if (typeof version !== "string" || !/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.test(version)) {
+    throw new Error("pocket ipodtouch4: manifest version must be MAJOR.MINOR.PATCH for this iOS target");
+  }
+  if (!/^[1-9][0-9]{0,8}$/.test(buildNumber)) {
+    throw new Error("pocket ipodtouch4: POCKETJS_IOS_BUILD_NUMBER must be a positive integer of at most nine digits");
+  }
+  return { productVersion: version, buildNumber };
+}
+
+export function renderIPodTouch4InfoPlist(source: string, app: IPodTouch4App, version: IOSAppVersion): string {
+  const template = IPODTOUCH4_APPS.clear;
+  const xml = (value: string) => value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&apos;");
+  let result = source
+    .replaceAll(`<string>${template.bundleId}.launch</string>`, `<string>${xml(app.bundleId)}.launch</string>`)
+    .replaceAll(`<string>${template.bundleId}</string>`, `<string>${xml(app.bundleId)}</string>`)
+    .replaceAll(`<string>${template.title}</string>`, `<string>${xml(app.title)}</string>`)
+    .replaceAll(`<string>${template.executable}</string>`, `<string>${xml(app.executable)}</string>`)
+    .replaceAll(`<string>${template.scheme}</string>`, `<string>${xml(app.scheme)}</string>`);
+  for (const [key, value] of [["CFBundleShortVersionString", version.productVersion], ["CFBundleVersion", version.buildNumber]]) {
+    const pattern = new RegExp(`(<key>${key}</key>\\s*<string>)[^<]*(</string>)`, "g");
+    if ([...result.matchAll(pattern)].length !== 1) throw new Error(`pocket ipodtouch4: template must contain one ${key}`);
+    result = result.replace(pattern, (_match, prefix, suffix) => `${prefix}${value}${suffix}`);
+  }
+  return result;
+}
+
+function renderInfoPlist(version: IOSAppVersion): string {
+  return renderIPodTouch4InfoPlist(readFileSync(join(REPOSITORY, "hosts/ipodtouch4/Info.plist"), "utf8"), APP, version);
 }
 
 function bundleDirectory(): string {
@@ -610,6 +636,7 @@ async function build(): Promise<void> {
     throw new Error("pocket ipodtouch4: validated iOS 6.1.3 sysroot is absent; run `bun ipodtouch4 prepare-sysroot`");
   }
   const manifest = JSON.parse(readFileSync(manifestPath(), "utf8"));
+  const version = resolveIOSAppVersion(manifest.version, process.env.POCKETJS_IOS_BUILD_NUMBER ?? "1");
   const plan = resolveIPodTouch4BuildPlan(manifest);
   mkdirSync(dirname(planPath()), { recursive: true });
   writeFileSync(planPath(), JSON.stringify(plan, null, 2) + "\n");
@@ -686,7 +713,7 @@ async function build(): Promise<void> {
   const bundle = bundleDirectory();
   rmSync(bundle, { recursive: true, force: true });
   mkdirSync(bundle, { recursive: true });
-  writeFileSync(join(bundle, "Info.plist"), renderInfoPlist());
+  writeFileSync(join(bundle, "Info.plist"), renderInfoPlist(version));
   cpSync(join(REPOSITORY, "hosts/ipodtouch4/PkgInfo"), join(bundle, "PkgInfo"));
   await bakeClassicIPhoneArtwork(bundle, "User");
 
@@ -816,6 +843,8 @@ async function build(): Promise<void> {
     target: inputs.target,
     hostAbi: inputs.hostAbi,
     deploymentTarget: DEPLOYMENT_TARGET,
+    productVersion: version.productVersion,
+    nativeBuildNumber: version.buildNumber,
     files,
     viewport: {
       logical: [inputs.viewport.logical[0], inputs.viewport.logical[1]],
@@ -1104,7 +1133,7 @@ function usage(): void {
   bun ipodtouch4 doctor
   bun ipodtouch4 setup-sources
   bun ipodtouch4 prepare-sysroot
-  bun ipodtouch4 build
+  POCKETJS_IOS_BUILD_NUMBER=1 bun ipodtouch4 build
   bun ipodtouch4 deploy
   bun ipodtouch4 uninstall
   bun ipodtouch4 launch

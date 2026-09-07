@@ -191,3 +191,27 @@ describe("private iPod touch 4 profile", () => {
     ).toBe(false);
   });
 });
+
+describe("application versions and native build receipts", () => {
+  test("stamps manifest version and an independent build counter for multiple app identities", async () => {
+    const { resolveIOSAppVersion, renderIPodTouch4InfoPlist } = await import("../tools/ipodtouch4.ts");
+    const source = readFileSync(join(repository, "hosts/ipodtouch4/Info.plist"), "utf8");
+    const first = renderIPodTouch4InfoPlist(source, IPODTOUCH4_APPS.clear, resolveIOSAppVersion("1.2.3", "42"));
+    expect(first).toMatch(/<key>CFBundleShortVersionString<\/key>\s*<string>1.2.3<\/string>/);
+    expect(first).toMatch(/<key>CFBundleVersion<\/key>\s*<string>42<\/string>/);
+    const second = renderIPodTouch4InfoPlist(source, { ...IPODTOUCH4_APPS.clear, bundleId: "dev.example.notes", executable: "Notes", title: "Notes & Lists", scheme: "example-notes" }, resolveIOSAppVersion("2.0.0", "43"));
+    expect(second).toContain("<string>dev.example.notes</string>");
+    expect(second).toContain("<string>Notes &amp; Lists</string>");
+    expect(second).toMatch(/<key>CFBundleVersion<\/key>\s*<string>43<\/string>/);
+    expect(() => renderIPodTouch4InfoPlist(source.replace("CFBundleVersion", "MissingVersion"), IPODTOUCH4_APPS.clear, resolveIOSAppVersion("1.0.0"))).toThrow("one CFBundleVersion");
+  });
+  test("rejects invalid native version metadata before building", async () => {
+    const { resolveIOSAppVersion } = await import("../tools/ipodtouch4.ts");
+    expect(resolveIOSAppVersion("1.2.3")).toEqual({ productVersion: "1.2.3", buildNumber: "1" });
+    for (const version of [undefined, 12, "1.2", "1.2.3-beta", "01.2.3", "<invalid>"]) expect(() => resolveIOSAppVersion(version)).toThrow();
+    for (const build of ["0", "-1", "01", "1.0", "abc", "1000000000"]) expect(() => resolveIOSAppVersion("1.2.3", build)).toThrow();
+    const receipt = { schema: 1 as const, buildId: "a", bundleId: "native.notes", target: "ios", hostAbi: 1, deploymentTarget: "6.0", files: {}, productVersion: "1.2.3", nativeBuildNumber: "42" };
+    expect(buildReceiptsMatch(receipt, { ...receipt, nativeBuildNumber: "43" })).toBe(false);
+    expect(buildReceiptsMatch(receipt, { ...receipt, productVersion: "1.2.4" })).toBe(false);
+  });
+});
