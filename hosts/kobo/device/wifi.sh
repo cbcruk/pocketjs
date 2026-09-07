@@ -29,13 +29,24 @@ WIFI_SUPPLICANT_DRIVER="${WIFI_SUPPLICANT_DRIVER:-wext}"
 # In 250ms ticks.
 WIFI_DHCP_TIMEOUT="${WIFI_DHCP_TIMEOUT:-60}"
 
-wifi_platform() {
-    if [ -n "${PLATFORM:-}" ]; then
-        echo "$PLATFORM"
+# Where the firmware keeps its Wi-Fi modules, asked rather than guessed.
+#
+# rcS exports WIFI_MODULE_PATH on every release seen so far, and it is the only
+# answer that survives them: 2.1.5 keeps the modules under /drivers/ntx508 and
+# does not export PLATFORM at all, while 3.19 exports PLATFORM=mx50-ntx.
+# Building the path from a platform name found neither.
+wifi_module_dir() {
+    if [ -n "${WIFI_MODULE_PATH:-}" ] && [ -e "$WIFI_ROOT$WIFI_MODULE_PATH" ]; then
+        dirname "$WIFI_ROOT$WIFI_MODULE_PATH"
         return 0
     fi
-    cpu="$(ntx_hwconfig -s -p /dev/mmcblk0 CPU 2>/dev/null)"
-    [ -n "$cpu" ] && echo "$cpu-ntx" || echo freescale
+    for dir in "$WIFI_ROOT"/drivers/*/wifi; do
+        if [ -e "$dir/$WIFI_MODULE.ko" ]; then
+            echo "$dir"
+            return 0
+        fi
+    done
+    return 1
 }
 
 wifi_supplicant_conf() {
@@ -63,8 +74,11 @@ module_loaded() {
 
 insmod_as_needed() {
     module_loaded "$1" && return 0
-    path="$(wifi_platform)"
-    file="$WIFI_ROOT/drivers/$path/wifi/$1.ko"
+    dir="$(wifi_module_dir)" || {
+        echo "wifi: found no /drivers/*/wifi holding $WIFI_MODULE.ko" >&2
+        return 1
+    }
+    file="$dir/$1.ko"
     [ -e "$file" ] || {
         echo "wifi: no module at $file" >&2
         return 1
@@ -136,6 +150,7 @@ wifi_status() {
     echo "interface  $WIFI_IFACE ${address:-(no address)}"
     echo "modules    sdio_wifi_pwr=$(module_loaded sdio_wifi_pwr && echo yes || echo no) \
 $WIFI_MODULE=$(module_loaded "$WIFI_MODULE" && echo yes || echo no)"
+    echo "module dir $(wifi_module_dir || echo '(not found)')"
     echo "supplicant $(pidof wpa_supplicant >/dev/null 2>&1 && echo running || echo stopped)"
     echo "dhcp       $(pidof dhcpcd >/dev/null 2>&1 || pidof udhcpc >/dev/null 2>&1 &&
         echo running || echo stopped)"

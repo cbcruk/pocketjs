@@ -37,6 +37,16 @@ if [ "${POCKETJS_REEXEC:-0}" != "1" ]; then
     exec "$stage/pocketjs.sh" "$@"
 fi
 
+# Booted from rcS this script's own output goes to the console and is lost, so
+# the one time it matters — a boot that did not work — there is nothing to
+# read. Keep it next to the host's log. Interactive runs still print.
+POCKETJS_BOOT_LOG="${POCKETJS_BOOT_LOG:-$POCKETJS_DIR/launcher.log}"
+if [ ! -t 1 ]; then
+    [ -f "$POCKETJS_BOOT_LOG" ] && mv -f "$POCKETJS_BOOT_LOG" "$POCKETJS_BOOT_LOG.1"
+    exec >>"$POCKETJS_BOOT_LOG" 2>&1
+fi
+echo "pocketjs: launcher starting $(date 2>/dev/null)"
+
 NICKEL_SH_LIBRARY=1
 export NICKEL_SH_LIBRARY
 # shellcheck source=hosts/kobo/device/nickel.sh
@@ -93,6 +103,7 @@ export POCKETJS_TOUCH_SWAP_XY POCKETJS_TOUCH_FLIP_X POCKETJS_TOUCH_FLIP_Y \
 # a root shell with no password on the local network — the firmware's own
 # debug behaviour, but not something a device should do silently.
 if [ -e "$POCKETJS_DIR/REMOTE" ]; then
+    echo "pocketjs: REMOTE present; bringing the network up"
     sh "$POCKETJS_DIR/wifi.sh" up || echo "pocketjs: could not bring Wi-Fi up" >&2
     if ! pidof telnetd >/dev/null 2>&1; then
         telnetd && echo "pocketjs: telnetd listening"

@@ -89,7 +89,10 @@ chmod +x "$APP/pocketjs-kobo"
 
 POCKETJS_DIR="$APP"
 POCKETJS_LOCK="$WORK/pocketjs.lock"
-export POCKETJS_DIR POCKETJS_LOCK
+# The launcher sends its own output here when stdout is not a terminal, which
+# is exactly the boot case, so that is where its refusals are.
+POCKETJS_BOOT_LOG="$WORK/boot.log"
+export POCKETJS_DIR POCKETJS_LOCK POCKETJS_BOOT_LOG
 
 await_nickel() {
     # nickel is restarted in the background; give it a moment to land.
@@ -187,7 +190,7 @@ echo running >"$NICKEL_STATE"
 mkdir -p "$POCKETJS_LOCK"
 echo $$ >"$POCKETJS_LOCK/pid"
 check "a second instance is refused" "1" "$(launch)"
-contains "the refusal names the holder" "already running as pid" "$WORK/out"
+contains "the refusal names the holder" "already running as pid" "$POCKETJS_BOOT_LOG"
 check "the refusal leaves the UI up" "running" "$(cat "$NICKEL_STATE")"
 rm -rf "$POCKETJS_LOCK"
 
@@ -201,9 +204,11 @@ check "a stale lock is cleared" "0" "$(launch)"
 echo running >"$NICKEL_STATE"
 mv "$APP/app.pak" "$WORK/pak.hidden"
 check "a missing pak fails the launch" "1" "$(launch)"
-contains "the failure explains itself" "pak not readable" "$WORK/out"
+contains "the failure explains itself" "pak not readable" "$POCKETJS_BOOT_LOG"
 check "the UI is never stopped when the launch fails early" "running" \
     "$(cat "$NICKEL_STATE")"
+contains "a boot with no terminal still leaves a log" "launcher starting" \
+    "$POCKETJS_BOOT_LOG"
 mv "$WORK/pak.hidden" "$APP/app.pak"
 
 echo
