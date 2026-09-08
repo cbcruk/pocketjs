@@ -259,6 +259,24 @@ check "a third boot still has the first boot's log" "0" \
 contains "the older generation is a real log" "launcher starting" \
     "$POCKETJS_BOOT_LOG.2"
 
+echo "-- clock.sh reads a timezone --"
+# This firmware has no zoneinfo database, so the zone is a POSIX string in a
+# file on the card. Absent, UTC — never a guess at where the device is.
+CLOCK_TZ_FILE="$WORK/timezone"
+export CLOCK_TZ_FILE
+clock_tz() {
+    CLOCK_SH_LIBRARY=1 sh -c '. "$1"; clock_timezone' _ "$DEVICE_DIR/clock.sh"
+}
+check "no file means UTC" "UTC" "$(clock_tz)"
+printf 'KST-9\n' >"$CLOCK_TZ_FILE"
+check "the file is used" "KST-9" "$(clock_tz)"
+printf '# Seoul\n\n  KST-9  \n' >"$CLOCK_TZ_FILE"
+check "comments and blank lines are skipped" "KST-9" "$(clock_tz)"
+printf '# only a comment\n' >"$CLOCK_TZ_FILE"
+check "a file with no zone means UTC" "UTC" "$(clock_tz)"
+rm -f "$CLOCK_TZ_FILE"
+unset CLOCK_TZ_FILE
+
 echo "-- wifi.sh picks a network --"
 # Which network a takeover boot joins is otherwise decided by a file nickel
 # wrote, on a device with no UI to change it and no shell until it has joined.

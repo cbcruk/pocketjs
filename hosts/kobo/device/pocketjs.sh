@@ -29,7 +29,9 @@ if [ "${POCKETJS_REEXEC:-0}" != "1" ]; then
     mkdir -p "$stage" || exit 1
     cp "$0" "$stage/pocketjs.sh" || exit 1
     cp "$source_dir/nickel.sh" "$stage/nickel.sh" || exit 1
+    cp "$source_dir/clock.sh" "$stage/clock.sh" 2>/dev/null
     chmod +x "$stage/pocketjs.sh" "$stage/nickel.sh"
+    [ -f "$stage/clock.sh" ] && chmod +x "$stage/clock.sh"
     POCKETJS_REEXEC=1
     POCKETJS_STAGE="$stage"
     export POCKETJS_REEXEC POCKETJS_STAGE POCKETJS_DIR POCKETJS_BIN POCKETJS_JS \
@@ -72,6 +74,17 @@ if [ "$POCKETJS_WATCHED" = 0 ]; then
     exec >>"$POCKETJS_BOOT_LOG" 2>&1
 fi
 echo "pocketjs: launcher starting $(date 2>/dev/null)"
+
+# The host reads the zone from the environment, and this firmware ships no
+# zoneinfo database — musl takes the POSIX string directly. Without this a
+# correct clock still shows the wrong hours, which for a status screen is the
+# same as being wrong.
+if [ -x "$POCKETJS_STAGE/clock.sh" ]; then
+    CLOCK_SH_LIBRARY=1 . "$POCKETJS_STAGE/clock.sh"
+    TZ="$(clock_timezone)"
+    export TZ
+    echo "pocketjs: timezone $TZ"
+fi
 
 NICKEL_SH_LIBRARY=1
 export NICKEL_SH_LIBRARY
@@ -198,6 +211,17 @@ if [ -e "$POCKETJS_DIR/REMOTE" ]; then
     # runs; /dev is a tmpfs built fresh each boot, so do not assume it did.
     if [ ! -e /dev/ptmx ]; then
         mknod /dev/ptmx c 5 2 && chmod 666 /dev/ptmx
+    fi
+
+    # The RTC survives a reboot and the network may not, so this is a
+    # correction rather than the source. Backgrounded: a boot should not wait
+    # on a name server, and the host is told to re-read the clock when the
+    # answer arrives — publish_boot_clock runs again on SIGHUP.
+    if [ -x "$POCKETJS_STAGE/clock.sh" ]; then
+        (
+            sh "$POCKETJS_STAGE/clock.sh" sync &&
+                killall -HUP pocketjs-kobo 2>/dev/null
+        ) &
     fi
 
     # Not `pidof telnetd`: started as a busybox applet the process is named
