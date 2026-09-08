@@ -47,8 +47,13 @@ const INK = "#000000";
 const MUTED = "#666666";
 const RULE = "#bbbbbb";
 
-/** Seconds between steps. Must stay under the host's 120ms MOTION_WINDOW. */
-const STEP_SECONDS = 0.1;
+/** Seconds between steps. Must stay under the host's 120ms MOTION_WINDOW.
+ *
+ * Measured, not chosen: at 0.1 the 30Hz virtual clock lands 3 or 4 ticks apart
+ * and the slow case is 133ms, which is outside the window — the probe drops
+ * back to the static path for a fifth of its updates and stops testing the
+ * waveform. Two ticks is 67ms with no rounding to argue about. */
+const STEP_SECONDS = 0.05;
 const SWEEP_STEPS = 11;
 const SWEEP_BAR = 26;
 /** Left edge of the heartbeat, clear of the bar's travel (10 * 26 + 26). */
