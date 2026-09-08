@@ -268,12 +268,16 @@ describe("platform registry", () => {
       presentations: ["integer-fit"],
       rasterDensity: 2,
     });
-    // Kobo Glo: touch only — its power/frontlight keys belong to the
-    // firmware — over a logical viewport that is exactly half the 758x1024
-    // panel on both axes, so the Gray8 rasterizer needs no fractional scale.
+    // Kobo Glo: touch — its power/frontlight keys belong to the firmware —
+    // over a logical viewport that is exactly half the 758x1024 panel on both
+    // axes, so the Gray8 rasterizer needs no fractional scale. Plus net.http,
+    // which the host implements in hosts/kobo/src/net.rs with TLS statically
+    // linked: this firmware's own OpenSSL is 0.9.8l from 2009 and its wget
+    // refuses an https URL, so there was nothing on the device to borrow.
     expect(POCKET_TARGETS["kobo-glo"].capabilities).toEqual([
       "input.touch",
       "text.glyphs.baked",
+      "net.http",
     ]);
     expect(POCKET_TARGETS["kobo-glo"].display).toEqual({
       physicalViewport: [758, 1024],
@@ -558,6 +562,7 @@ describe("semantic resolution", () => {
       "hangul-probe": [false, false, false, false], // shares paper-ink's fixed 379x512 kobo-glo touch surface
       "ink-clock": [false, false, false, false], // ditto: the kobo-glo status screen
       "ghost-probe": [false, false, false, false], // ditto: the kobo-glo waveform test screen
+      "net-probe": [false, false, false, false], // ditto: the kobo-glo network check
       hero: [true, true, true, true],
       "hero-vue-sfc": [true, true, false, true],
       "hero-vue-vapor": [true, true, false, true],

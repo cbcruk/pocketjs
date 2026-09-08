@@ -326,6 +326,10 @@ export const POCKET_TARGETS = defineTargetRegistry<PocketCapabilityId, {
     capabilities: [
       "input.touch",
       "text.glyphs.baked",
+      // hosts/kobo/src/net.rs: the transport pocket-net leaves to the host,
+      // with TLS statically linked because this firmware has none a host
+      // could borrow — its OpenSSL is 0.9.8l and its wget refuses https.
+      "net.http",
     ],
   },
   // The flat pocket-widget shell (examples/note-widget is the stock host):

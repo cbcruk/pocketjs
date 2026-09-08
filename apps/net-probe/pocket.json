@@ -1,0 +1,31 @@
+{
+  "$schema": "https://pocketjs.dev/schema/pocket-2.json",
+  "pocket": 2,
+  "id": "dev.pocket-stack.net-probe",
+  "name": "pocketjs-net-probe",
+  "title": "PocketJS: Net Probe",
+  "version": "0.1.0",
+  "engine": {
+    "capabilities": {
+      "requires": [
+        "input.touch",
+        "text.glyphs.baked",
+        "net.http"
+      ]
+    }
+  },
+  "app": {
+    "entry": "apps/net-probe/main.tsx",
+    "output": "net-probe-main",
+    "framework": "solid",
+    "viewport": {
+      "fixed": {
+        "logical": [
+          379,
+          512
+        ],
+        "presentation": "native"
+      }
+    }
+  }
+}

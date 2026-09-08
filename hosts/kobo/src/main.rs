@@ -4,6 +4,7 @@ mod damage;
 mod framebuffer;
 mod geometry;
 mod input;
+mod net;
 mod refresh;
 
 use std::path::PathBuf;
@@ -17,6 +18,7 @@ use framebuffer::Framebuffer;
 use geometry::{Geometry, Rotation, compatible_reported_rotation};
 use input::{ContactReport, Input, PowerKey};
 use pocket_mod::Guest;
+use pocket_net::NetSurface;
 use pocket_ui_surface::UiSurface;
 use pocketjs_core::spec;
 use refresh::{Epdc, RefreshKind, RefreshPolicy, Waveform};
@@ -481,7 +483,11 @@ struct AppRuntime {
 }
 
 impl AppRuntime {
-    fn load(args: &Args, geometry: &Geometry) -> Result<Self> {
+    fn load(
+        args: &Args,
+        geometry: &Geometry,
+        net_surface: &NetSurface<net::UreqTransport>,
+    ) -> Result<Self> {
         let sim_hz = args.sim_hz;
         let pak = std::fs::read(&args.pak)
             .with_context(|| format!("reading pak {}", args.pak.display()))?;
@@ -496,6 +502,12 @@ impl AppRuntime {
         surface.feed_pak(&pak);
         let guest = Guest::new().context("creating PocketJS guest")?;
         surface.mount(&guest).context("mounting UI surface")?;
+        // globalThis.net, the five ops in contracts/spec/net.ts. The profile
+        // advertises net.http, so an app that declares the capability is
+        // admitted here and must find the namespace mounted.
+        net_surface
+            .mount(&guest)
+            .context("mounting the net surface")?;
         // Same contract slot as `__pak`: host policy the bundle latches when it
         // mounts. Publishing it and then pacing the loop at a different rate
         // would make the guest's clock disagree with the wall.
@@ -543,8 +555,16 @@ impl AppRuntime {
     /// remains correct. Skipping the raster and the diff is what makes an idle
     /// tick cheap without dropping a frame — virtual time is a frame counter,
     /// so the guest still has to be ticked on schedule or its clock stops.
-    fn tick(&mut self, touches: &[u32]) -> Result<Option<Vec<Rect>>> {
+    fn tick(
+        &mut self,
+        touches: &[u32],
+        net_surface: &NetSurface<net::UreqTransport>,
+    ) -> Result<Option<Vec<Rect>>> {
         let entered = Instant::now();
+        // The one point where the worker's completions cross into the guest.
+        // Before the frame, so a response that landed during the last one is
+        // visible to this one rather than a frame late.
+        net_surface.begin_tick();
         self.guest
             .frame_with_touches(0, spec::ANALOG_CENTER, touches)
             .context("PocketJS guest frame")?;
@@ -699,6 +719,11 @@ fn main() -> Result<()> {
         .grab_selected()
         .context("claiming the Kobo touchscreen")?;
 
+    // One transport for the life of the process. A reload rebuilds the guest,
+    // and mounting a fresh surface each time would spawn a worker thread each
+    // time; the cost of keeping it is that a reload abandons whatever was in
+    // flight, which is the right trade for a bundle that just changed.
+    let net_surface = NetSurface::new(net::UreqTransport::new());
     let mut fbink = Epdc::new(&args.framebuffer)?;
     log::info!("kobo panel updates: {}", fbink.path().display());
     let mut refresh = RefreshPolicy::new(
@@ -709,7 +734,7 @@ fn main() -> Result<()> {
         args.ghost_budget,
         args.ghost_area_panels,
     )?;
-    let mut runtime = AppRuntime::load(&args, &geometry)?;
+    let mut runtime = AppRuntime::load(&args, &geometry, &net_surface)?;
 
     let reload = Arc::new(AtomicBool::new(false));
     let terminate = Arc::new(AtomicBool::new(false));
@@ -764,22 +789,21 @@ fn main() -> Result<()> {
     let mut pending = Vec::<Rect>::new();
     let mut first_frame = true;
     let mut force_refresh = false;
-    /// Consecutive refusals before the panel is called genuinely gone. One is
-    /// a hiccup the next update clears; a run of them is hardware that is not
-    /// coming back, and then handing the device to the Kobo UI is right.
+    // Consecutive refusals before the panel is called genuinely gone. One is
+    // a hiccup the next update clears; a run of them is hardware that is not
+    // coming back, and then handing the device to the Kobo UI is right.
     const MAX_PANEL_ERRORS: u32 = 30;
     let mut panel_errors: u32 = 0;
-    /// How long this panel needs to finish an update of each waveform,
-    /// learned from the first one of each rather than guessed: it varies with
-    /// waveform, area and temperature, and a constant compiled in here would
-    /// be wrong on the next panel.
-    ///
-    /// This is the host's only honest pacing signal. `--present-hz 30` says
-    /// what the loop may attempt, not what the ink can do: a full-width DU
-    /// update takes about a quarter second and a full flash about one, so a
-    /// host that believes the 30 submits ten times more work than the panel
-    /// retires. It has no way to notice, because the ioctl that would have
-    /// told it was being called wrong and failing instantly.
+    // How long this panel needs to finish an update of each waveform,
+    // learned from the first one of each rather than guessed: it varies with
+    // waveform, area and temperature, and a constant compiled in here would
+    // be wrong on the next panel.
+    // This is the host's only honest pacing signal. `--present-hz 30` says
+    // what the loop may attempt, not what the ink can do: a full-width DU
+    // update takes about a quarter second and a full flash about one, so a
+    // host that believes the 30 submits ten times more work than the panel
+    // retires. It has no way to notice, because the ioctl that would have
+    // told it was being called wrong and failing instantly.
     let mut settle: [Option<Duration>; Waveform::COUNT] = [None; Waveform::COUNT];
     let mut panel_quiet_until: Option<Instant> = None;
     let mut power_pressed_at: Option<Instant> = None;
@@ -788,7 +812,7 @@ fn main() -> Result<()> {
         if reload.swap(false, Ordering::AcqRel) {
             // This point is between guest turns. Keep the old realm alive if
             // a deploy is incomplete or the new bundle throws during boot.
-            match AppRuntime::load(&args, &geometry) {
+            match AppRuntime::load(&args, &geometry, &net_surface) {
                 Ok(next) => {
                     runtime = next;
                     pending.clear();
@@ -838,7 +862,7 @@ fn main() -> Result<()> {
             // against the preceding 60Hz simulation frame. This bounds damage
             // while FBInk is busy and lets A -> B -> A disappear before a
             // slower physical present.
-            if let Some(dirty) = runtime.tick(&touches)? {
+            if let Some(dirty) = runtime.tick(&touches, &net_surface)? {
                 pending = dirty;
             }
             next_tick += logic_tick;

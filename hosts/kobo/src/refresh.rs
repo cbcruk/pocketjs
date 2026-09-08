@@ -17,7 +17,11 @@
 
 use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+// Timing a wait needs a clock, and waiting is a Linux ioctl; on other targets
+// the probe does not compile at all.
+#[cfg(target_os = "linux")]
+use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
 
@@ -274,8 +278,12 @@ const MXCFB_SEND_UPDATE_V1_NTX: libc::c_ulong = 0x4044_462E;
 #[cfg(target_os = "linux")]
 const MXCFB_WAIT_FOR_UPDATE_COMPLETE_V1: libc::c_ulong = 0x4004_462F;
 /// The same call declared the other direction, which some NTX kernels ship.
+/// Only `--probe-epdc` uses it: this kernel answers ENOTTY, but a different
+/// device is why the probe tries more than one.
+#[cfg(target_os = "linux")]
 const MXCFB_WAIT_FOR_UPDATE_COMPLETE_R: libc::c_ulong = 0x8004_462F;
 /// The v2 form: a struct holding the marker and a collision-test rect.
+#[cfg(target_os = "linux")]
 const MXCFB_WAIT_FOR_UPDATE_COMPLETE_V2: libc::c_ulong = 0xC008_4635;
 
 #[repr(C)]
