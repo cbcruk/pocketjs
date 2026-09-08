@@ -241,6 +241,29 @@ unset POCKETJS_STDOUT
 
 mv "$WORK/pak.hidden" "$APP/app.pak"
 
+echo "-- wifi.sh picks a network --"
+# Which network a takeover boot joins is otherwise decided by a file nickel
+# wrote, on a device with no UI to change it and no shell until it has joined.
+WIFI_ROOT="$WORK/wifiroot"
+export WIFI_ROOT
+mkdir -p "$WIFI_ROOT/mnt/onboard/.kobo" "$WIFI_ROOT/etc/wpa_supplicant" \
+    "$WIFI_ROOT$POCKETJS_DIR"
+: >"$WIFI_ROOT/etc/wpa_supplicant/wpa_supplicant.conf"
+check "the rootfs file is the last resort" \
+    "$WIFI_ROOT/etc/wpa_supplicant/wpa_supplicant.conf" \
+    "$(WIFI_SH_LIBRARY=1 sh -c '. "$1"; wifi_supplicant_conf' _ "$DEVICE_DIR/wifi.sh" 2>/dev/null)"
+
+: >"$WIFI_ROOT/mnt/onboard/.kobo/wpa_supplicant.conf"
+check "nickel's file beats the rootfs one" \
+    "$WIFI_ROOT/mnt/onboard/.kobo/wpa_supplicant.conf" \
+    "$(WIFI_SH_LIBRARY=1 sh -c '. "$1"; wifi_supplicant_conf' _ "$DEVICE_DIR/wifi.sh" 2>/dev/null)"
+
+: >"$WIFI_ROOT$POCKETJS_DIR/wifi.conf"
+check "a wifi.conf on the card beats both" \
+    "$WIFI_ROOT$POCKETJS_DIR/wifi.conf" \
+    "$(WIFI_SH_LIBRARY=1 sh -c '. "$1"; wifi_supplicant_conf' _ "$DEVICE_DIR/wifi.sh" 2>/dev/null)"
+unset WIFI_ROOT
+
 echo "-- the hardware-status pipe --"
 # rcS creates this pipe and the firmware's own event scripts write a line to
 # it on every DHCP lease and every USB or SD change. Nickel is the reader, so

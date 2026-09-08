@@ -50,8 +50,25 @@ wifi_module_dir() {
 }
 
 wifi_supplicant_conf() {
-    # FW 5.x moved it onto the user partition; this one is still on rootfs.
+    # wifi.conf next to the launcher wins. Without it the device joins
+    # whatever the file nickel wrote ranks highest, which on a takeover boot
+    # is a decision nobody can see being made and nobody can change: two boots
+    # came up with the clock on screen, the radio on some other network, and
+    # no way in to ask why. This file sits on the FAT32 partition, so a card
+    # reader and any text editor are enough to pin the network — no ext4
+    # tools, and no working network needed to fix the network.
+    #
+    # It is a wpa_supplicant.conf. The smallest useful one:
+    #
+    #   network={
+    #       ssid="my-network"
+    #       psk="my-password"
+    #   }
+    #
+    # FW 5.x moved nickel's copy onto the user partition; this one is still on
+    # rootfs, so both are tried after ours.
     for candidate in \
+        "$WIFI_ROOT${POCKETJS_DIR:-/mnt/onboard/.apps/pocketjs}/wifi.conf" \
         "$WIFI_ROOT/mnt/onboard/.kobo/wpa_supplicant.conf" \
         "$WIFI_ROOT/etc/wpa_supplicant/wpa_supplicant.conf"; do
         [ -f "$candidate" ] && { echo "$candidate"; return 0; }
@@ -151,6 +168,7 @@ wifi_status() {
     echo "modules    sdio_wifi_pwr=$(module_loaded sdio_wifi_pwr && echo yes || echo no) \
 $WIFI_MODULE=$(module_loaded "$WIFI_MODULE" && echo yes || echo no)"
     echo "module dir $(wifi_module_dir || echo '(not found)')"
+    echo "config     $(wifi_supplicant_conf || echo '(none found)')"
     echo "supplicant $(pidof wpa_supplicant >/dev/null 2>&1 && echo running || echo stopped)"
     echo "dhcp       $(pidof dhcpcd >/dev/null 2>&1 || pidof udhcpc >/dev/null 2>&1 &&
         echo running || echo stopped)"
