@@ -241,6 +241,24 @@ unset POCKETJS_STDOUT
 
 mv "$WORK/pak.hidden" "$APP/app.pak"
 
+echo "-- the log survives more than one reboot --"
+# A single .1 generation lives exactly one reboot, and the reboot after a
+# crash is rarely the last one before anybody looks: two boots spent testing
+# the network overwrote the log of the crash they were meant to explain.
+rm -f "$POCKETJS_BOOT_LOG".* "$APP"/pocketjs.log*
+echo running >"$NICKEL_STATE"
+launch >/dev/null
+echo running >"$NICKEL_STATE"
+launch >/dev/null
+echo running >"$NICKEL_STATE"
+launch >/dev/null
+# Three boots: the current log, plus .1 and .2. The first boot's log is .2,
+# and with only one generation it would already be gone.
+check "a third boot still has the first boot's log" "0" \
+    "$([ -f "$POCKETJS_BOOT_LOG.2" ] && echo 0 || echo 1)"
+contains "the older generation is a real log" "launcher starting" \
+    "$POCKETJS_BOOT_LOG.2"
+
 echo "-- wifi.sh picks a network --"
 # Which network a takeover boot joins is otherwise decided by a file nickel
 # wrote, on a device with no UI to change it and no shell until it has joined.

@@ -27,7 +27,11 @@ WIFI_IFACE="${WIFI_IFACE:-${INTERFACE:-eth0}}"
 WIFI_MODULE="${WIFI_MODULE:-dhd}"
 WIFI_SUPPLICANT_DRIVER="${WIFI_SUPPLICANT_DRIVER:-wext}"
 # In 250ms ticks.
-WIFI_DHCP_TIMEOUT="${WIFI_DHCP_TIMEOUT:-60}"
+# Quarter-second ticks. Association is a scan plus a handshake; a lease is one
+# exchange once that is done, but busybox udhcpc backs off after a failed
+# round, so leave room for a retry rather than only the first attempt.
+WIFI_ASSOC_TIMEOUT="${WIFI_ASSOC_TIMEOUT:-120}"
+WIFI_DHCP_TIMEOUT="${WIFI_DHCP_TIMEOUT:-120}"
 
 # Where the firmware keeps its Wi-Fi modules, asked rather than guessed.
 #
@@ -47,6 +51,24 @@ wifi_module_dir() {
         fi
     done
     return 1
+}
+
+# wpa_cli is how the supplicant answers; without it association is invisible
+# and a bring-up failure cannot say whether the radio or the DHCP server was
+# the problem. Absent, report unknown and let the caller carry on.
+wifi_supplicant_state() {
+    command -v wpa_cli >/dev/null 2>&1 || { echo "unknown"; return; }
+    wpa_cli -i "$WIFI_IFACE" status 2>/dev/null |
+        sed -n 's/^wpa_state=//p' | head -1 | grep . || echo "unknown"
+}
+
+wifi_associated() {
+    case "$(wifi_supplicant_state)" in
+        COMPLETED) return 0 ;;
+        # No wpa_cli to ask: an address is the only evidence available.
+        unknown) [ -n "$(wifi_address)" ] ;;
+        *) return 1 ;;
+    esac
 }
 
 wifi_supplicant_conf() {
@@ -125,6 +147,25 @@ wifi_up() {
         wpa_supplicant -D "$WIFI_SUPPLICANT_DRIVER" -i "$WIFI_IFACE" \
             -c "$conf" -C /var/run/wpa_supplicant -B || return 1
     fi
+
+    # Associating takes seconds: a scan, then the handshake. Asking for a lease
+    # before that is asking an interface with no path to a server, and the
+    # discovers are simply lost — which is what a failed boot looks like in the
+    # log, three discovers and "No lease, forking to background". The boot that
+    # worked printed exactly the same line and then got its lease from the
+    # backgrounded retry inside the timeout. That is a race, not a network
+    # problem, and waiting for the radio first is what removes it.
+    ticks=0
+    while ! wifi_associated; do
+        if [ "$ticks" -ge "$WIFI_ASSOC_TIMEOUT" ]; then
+            echo "wifi: not associated after $((WIFI_ASSOC_TIMEOUT / 4))s" \
+                "(state $(wifi_supplicant_state)); asking for a lease anyway" >&2
+            break
+        fi
+        usleep 250000
+        ticks=$((ticks + 1))
+    done
+    wifi_associated && echo "wifi: associated after $((ticks / 4))s"
 
     if [ -z "$(wifi_address)" ] || ! pidof dhcpcd udhcpc >/dev/null 2>&1; then
         if [ -x /sbin/dhcpcd ]; then

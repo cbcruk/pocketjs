@@ -46,13 +46,29 @@ fi
 # What actually separates the two is which terminal — a session that can read
 # the output arrives over telnet on a pty; anything else has nobody watching.
 POCKETJS_BOOT_LOG="${POCKETJS_BOOT_LOG:-$POCKETJS_DIR/launcher.log}"
+# Keep more than one generation. A single .1 survives exactly one reboot, and
+# the reboot after a crash is rarely the last one before anybody looks: two
+# boots to test the network were enough to overwrite the log of the crash they
+# were meant to explain.
+POCKETJS_LOG_KEEP="${POCKETJS_LOG_KEEP:-4}"
+
+rotate_log() {
+    [ -f "$1" ] || return 0
+    generation="$POCKETJS_LOG_KEEP"
+    while [ "$generation" -gt 1 ]; do
+        previous=$((generation - 1))
+        [ -f "$1.$previous" ] && mv -f "$1.$previous" "$1.$generation"
+        generation="$previous"
+    done
+    mv -f "$1" "$1.1"
+}
 POCKETJS_STDOUT="${POCKETJS_STDOUT:-$(readlink /proc/self/fd/1 2>/dev/null)}"
 case "$POCKETJS_STDOUT" in
     /dev/pts/*) POCKETJS_WATCHED=1 ;;
     *) POCKETJS_WATCHED=0 ;;
 esac
 if [ "$POCKETJS_WATCHED" = 0 ]; then
-    [ -f "$POCKETJS_BOOT_LOG" ] && mv -f "$POCKETJS_BOOT_LOG" "$POCKETJS_BOOT_LOG.1"
+    rotate_log "$POCKETJS_BOOT_LOG"
     exec >>"$POCKETJS_BOOT_LOG" 2>&1
 fi
 echo "pocketjs: launcher starting $(date 2>/dev/null)"
@@ -207,7 +223,7 @@ nickel_stop || fail "nickel would not stop; refusing to fight it for /dev/fb0"
 status_drain_start
 log_flush_start
 
-[ -f "$POCKETJS_LOG" ] && mv -f "$POCKETJS_LOG" "$POCKETJS_LOG.1"
+rotate_log "$POCKETJS_LOG"
 echo "pocketjs: logging $POCKETJS_LOG"
 
 POCKETJS_GUI_PAUSED=1
