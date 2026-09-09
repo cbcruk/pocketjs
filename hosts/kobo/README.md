@@ -182,34 +182,44 @@ clone on idle ticks was tried and measured nothing, so it is not in here.
 
 ### The power key
 
-Nickel normally owns the power button, so with nickel paused a press does
-nothing — which is why a running session can look like a hung device. The host
-reads `KEY_POWER` off the vestigial keypad node (`mxckpd`, separate from the
-digitizer) and acts on release, because there is no way to tell the user what a
-hold is about to do while it is happening:
+**On a Glo the power button never reaches software, and this section used to
+claim otherwise.** `/proc/interrupts` settles it: `mxckpd` — the node the host
+picks, because it is the one that *declares* `KEY_POWER` — has taken zero
+interrupts since boot, and the separate `power_key` line carries only the one
+from switching the device on. Pressing the button while the system runs raises
+neither. The PMIC keeps it, and the kernel knows it only as a wakeup source
+for a suspend that does not work either.
+
+The node is real and permanently silent, which is the same shape as the
+digitizer advertising an axis range the panel does not use. It reads as
+nothing whether nickel is running or not; an earlier note here explained the
+silence as nickel holding `EVIOCGRAB`, and that was the wrong explanation for
+the right observation. A long press does hand the device back — by cutting
+power, not by this code.
+
+So the table below describes what the host would do on a device whose button
+is wired to an input node. It has never run on this one:
 
 | Press | Effect |
 | --- | --- |
-| Short | `power.sh suspend`, then a reload |
+| Short | `--power-press`: `none` (default), `doze`, or `suspend` |
 | Held 1.5s or more | Exit, so the launcher's trap hands nickel back |
 
-Verified on a Glo: the host finds the key on `/dev/input/event0` and a long
-press hands the device back. The key reads as nothing while nickel runs —
-nickel holds `EVIOCGRAB` on that node — which is only ever the case when this
-host is not running.
-
-**Suspend on this model is not settled.** Nickel's own short press is a display
-sleep, not a suspend to RAM: the network stays up and `/proc/uptime` keeps
-counting through it. `power.sh` asks for `mem`, which is deeper than anything
-nickel does here, and one attempt did not come back. Point `--power-helper` at
-something else, or pass `--no-power-key`, until that is understood.
+`--power-press` defaults to `none` for a reason. `doze` drops the radio, so the
+power key is the only way back — and on this device there is no power key.
+`--doze-max-secs` (default 600) is the floor under that: a doze ends on its own
+whether or not a key ever arrives. `suspend` asks for `mem`, which hangs this
+kernel in the driver-suspend stage; `hosts/kobo/device/suspend-probe.sh` walks
+the kernel's own `pm_test` levels to show where, and `docs/PROGRESS.md` has the
+result.
 
 The reload after a resume is not incidental. Virtual time is a frame counter,
-so it does not advance while the machine is down; republishing the boot clock
+so it does not advance while the machine is asleep; republishing the boot clock
 is the only way a calendar app comes back showing the right hour.
 
-`--no-power-key` opts out. Sleeping is device policy rather than rendering, so
-it lives in a shell script for the same reason the panel update does.
+`--no-power-key` ignores the node entirely. Sleeping is device policy rather
+than rendering, so it lives in a shell script for the same reason the panel
+update does.
 
 Neither probe writes the framebuffer, so both are safe to run while nickel owns
 the panel. `--probe-touch` does claim the digitizer exclusively, so a probe tap

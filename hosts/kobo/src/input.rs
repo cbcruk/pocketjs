@@ -381,7 +381,11 @@ impl Input {
         }
         let power = discover_power_device();
         match &power {
-            Some(device) => log::info!("kobo input: power key on {}", device.path),
+            Some(device) => log::info!(
+                "kobo input: a node claiming KEY_POWER at {} — on a Glo it never \
+                 sends one, the PMIC keeps the button",
+                device.path
+            ),
             None => log::info!("kobo input: no power key found; the host cannot sleep itself"),
         }
         Ok(Self {
@@ -575,7 +579,19 @@ fn discover_devices() -> Result<Vec<Device>> {
 fn discover_devices() -> Result<Vec<Device>> {
     Ok(Vec::new())
 }
-
+/// The first evdev node that says it can report KEY_POWER.
+///
+/// Says it can. On a Glo that is `mxckpd`, and the button is not wired to it:
+/// `/proc/interrupts` shows mxckpd at zero since boot while a separate
+/// `power_key` line carries the one interrupt from switching the device on,
+/// and no input device sits behind that line at all. Presses while the system
+/// runs raise neither counter — the PMIC handles the button in hardware and
+/// the kernel only ever sees it as a wakeup source.
+///
+/// So on this device the returned node is real and silent, exactly like the
+/// digitizer's declared axis range that the panel does not use. Nothing here
+/// can tell the difference without a press, which is why the caller says what
+/// it found rather than what it expects to receive.
 #[cfg(target_os = "linux")]
 fn discover_power_device() -> Option<KeyDevice> {
     use std::fs::OpenOptions;

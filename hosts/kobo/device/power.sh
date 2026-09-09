@@ -1,7 +1,7 @@
 #!/bin/sh
 # Suspend the Kobo to RAM, and put it back together on the way out.
 #
-#   power.sh suspend | status
+#   power.sh doze | wake | suspend | status
 #
 # Nickel normally owns this. A session that replaced nickel has to do it
 # itself, or the device runs the battery down staying awake — a reader that
@@ -32,6 +32,20 @@ POWER_IR_KNOBS="/sys/devices/virtual/input/input1/neocmd
 # Wi-Fi does not survive a suspend on this chip, so it is taken down first and
 # brought back after. Set to 0 to leave the interface alone.
 POWER_RESTORE_WIFI="${POWER_RESTORE_WIFI:-1}"
+# `doze` is what this device actually gets. Suspend-to-RAM hangs its kernel in
+# the driver-suspend stage — proved with the kernel's own pm_test, with the
+# host stopped and Wi-Fi down, so it is not something userspace is doing wrong
+# (hosts/kobo/docs/PROGRESS.md). Dozing keeps the machine up and drops the
+# radio; the caller stops ticking the guest.
+#
+# It does NOT touch the CPU frequency, and an earlier version that did was
+# measuring the wrong thing. cpufreq reports a `userspace` governor sitting at
+# 800MHz, which reads like a chip pinned at its maximum — but DVFS is enabled
+# underneath and scales the part regardless. Sampled ten times a second:
+# 176MHz average with the runtime ticking, 160MHz (the floor) with it stopped.
+# There was nothing there to save.
+POWER_CPUFREQ="$POWER_ROOT/sys/devices/system/cpu/cpu0/cpufreq"
+POWER_DOZE_STATE="${POWER_DOZE_STATE:-/tmp/pocketjs-doze}"
 
 power_dir() {
     dirname "$(readlink -f "$0" 2>/dev/null || echo "$0")"
@@ -45,7 +59,43 @@ power_status() {
     for knob in $POWER_IR_KNOBS; do
         [ -f "$knob" ] && echo "ir grid        $knob"
     done
+    # The governor line is informational and misleading on its own: DVFS moves
+    # the part underneath it, so cur_freq is the only number worth reading.
+    echo "cpu            $(cpufreq_read scaling_cur_freq) kHz now \
+(range $(cpufreq_read scaling_min_freq)-$(cpufreq_read scaling_max_freq), \
+governor $(cpufreq_read scaling_governor) over DVFS)"
+    echo "dozing         $([ -f "$POWER_DOZE_STATE" ] && echo yes || echo no)"
     grep -q mem "$POWER_STATE" 2>/dev/null
+}
+
+cpufreq_read() {
+    cat "$POWER_CPUFREQ/$1" 2>/dev/null
+}
+
+power_doze() {
+    if [ -f "$POWER_DOZE_STATE" ]; then
+        echo "power: already dozing"
+        return 0
+    fi
+    : >"$POWER_DOZE_STATE"
+
+    if [ "$POWER_RESTORE_WIFI" = "1" ] && [ -x "$(power_dir)/wifi.sh" ]; then
+        "$(power_dir)/wifi.sh" down
+    fi
+    echo "power: dozing — radio down, cpu left to DVFS ($(cpufreq_read scaling_cur_freq) kHz)"
+}
+
+power_wake() {
+    [ -f "$POWER_DOZE_STATE" ] || {
+        echo "power: not dozing"
+        return 0
+    }
+    rm -f "$POWER_DOZE_STATE"
+
+    if [ "$POWER_RESTORE_WIFI" = "1" ] && [ -x "$(power_dir)/wifi.sh" ]; then
+        "$(power_dir)/wifi.sh" up
+    fi
+    echo "power: awake"
 }
 
 power_suspend() {
@@ -90,9 +140,11 @@ power_suspend() {
 if [ "${POWER_SH_LIBRARY:-0}" != "1" ]; then
     case "${1:-}" in
         suspend) power_suspend ;;
+        doze) power_doze ;;
+        wake) power_wake ;;
         status) power_status ;;
         *)
-            echo "usage: power.sh suspend | status" >&2
+            echo "usage: power.sh doze | wake | suspend | status" >&2
             exit 2
             ;;
     esac

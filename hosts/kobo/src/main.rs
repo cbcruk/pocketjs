@@ -36,6 +36,8 @@ const MAX_CATCHUP_TICKS: usize = 4;
 /// rather than "sleep". Judged on release, so a hold is never ambiguous while
 /// it is happening — there is no way to tell the user what it is about to do.
 const POWER_LONG_PRESS: Duration = Duration::from_millis(1500);
+/// How often a dozing host looks for the power key.
+const DOZE_POLL: Duration = Duration::from_millis(250);
 /// Core ticks a bundle's realm advances per virtual second (spec FIXED_DT).
 const CORE_TICKS_PER_SECOND: u32 = 60;
 
@@ -56,6 +58,37 @@ fn parse_sim_hz(value: &str) -> Result<u32> {
     Ok(hz)
 }
 
+/// What a short press on the power key does.
+///
+/// The default is to do nothing, and that is not timidity. Both of the other
+/// two end with the device depending on the power key to come back, and on
+/// this Glo the key is not dependable: three deliberate presses did nothing,
+/// and a later one went through. Until that is understood, a short press that
+/// can leave the device unreachable is worse than a short press that is
+/// ignored — the user is the one who has to hold the reset.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PowerPress {
+    /// Ignore it. Long-press still hands the device back.
+    Ignore,
+    /// Stop ticking and let the device spend less, staying up.
+    Doze,
+    /// Suspend to RAM through the helper. Kept for a device where that works;
+    /// on this Glo it hangs in the driver-suspend stage and the only way out
+    /// is a reset the user has to perform by hand.
+    Suspend,
+}
+
+impl PowerPress {
+    fn parse(value: &str) -> Result<Self> {
+        match value {
+            "none" => Ok(Self::Ignore),
+            "doze" => Ok(Self::Doze),
+            "suspend" => Ok(Self::Suspend),
+            _ => bail!("--power-press must be none, doze or suspend (got {value:?})"),
+        }
+    }
+}
+
 #[derive(Debug)]
 struct Args {
     js: PathBuf,
@@ -68,6 +101,8 @@ struct Args {
     rotation: Option<Rotation>,
     sim_hz: u32,
     power_helper: Option<PathBuf>,
+    power_press: PowerPress,
+    doze_max: Duration,
     probe: bool,
     probe_touch: bool,
     probe_epdc: bool,
@@ -97,6 +132,13 @@ impl Args {
             power_helper: Some(
                 env_path("POCKETJS_POWER_HELPER")
                     .unwrap_or_else(|| "/mnt/onboard/.apps/pocketjs/power.sh".into()),
+            ),
+            power_press: match std::env::var("POCKETJS_POWER_PRESS") {
+                Ok(value) => PowerPress::parse(&value)?,
+                Err(_) => PowerPress::Ignore,
+            },
+            doze_max: Duration::from_secs(
+                env_parse("POCKETJS_DOZE_MAX_SECS")?.unwrap_or(600),
             ),
             probe: false,
             probe_touch: false,
@@ -147,6 +189,14 @@ impl Args {
                 }
                 "--power-helper" => args.power_helper = Some(value(&mut index)?.into()),
                 "--no-power-key" => args.power_helper = None,
+                "--power-press" => args.power_press = PowerPress::parse(value(&mut index)?)?,
+                "--doze-max-secs" => {
+                    args.doze_max = Duration::from_secs(
+                        value(&mut index)?
+                            .parse()
+                            .context("--doze-max-secs must be an integer")?,
+                    )
+                }
                 "--probe" => args.probe = true,
                 "--probe-touch" => args.probe_touch = true,
                 "--probe-epdc" => args.probe_epdc = true,
@@ -205,6 +255,13 @@ Options:
   --sim-hz N               virtual frames per second, must divide 60 (default 30)
   --power-helper PATH      script run as `PATH suspend` on a short power press
   --no-power-key           ignore the power key entirely
+  --power-press none|doze|suspend
+                           what a short press does (default none). Suspend
+                           hangs this kernel; doze stops the loop and drops the
+                           radio, and needs the power key to come back
+  --doze-max-secs N        wake from a doze after N seconds even without a key
+                           (default 600), so a key that does not arrive cannot
+                           leave the device unreachable
   --probe                  report framebuffer geometry and exit
   --probe-touch            report live touch coordinates until interrupted
   --probe-epdc             report which panel-wait ioctl this kernel has
@@ -472,6 +529,102 @@ fn suspend_through(helper: &std::path::Path) -> Result<()> {
         bail!("{} suspend exited with {status}", helper.display());
     }
     log::info!("kobo power: resumed");
+    Ok(())
+}
+
+/// Ask the device to spend less while nothing is happening.
+///
+/// Not the same thing as sleeping, and not a substitute for it. Suspend-to-RAM
+/// hangs this kernel in the driver-suspend stage — established with the
+/// kernel's own pm_test, with this host stopped and Wi-Fi already down, so it
+/// is not something userspace is doing wrong. What is left is to stop
+/// spending: the helper drops the radio and this stops ticking the guest.
+///
+/// Modest, and honestly so. The CPU is not part of it: cpufreq advertises a
+/// `userspace` governor at 800MHz, but DVFS scales the part underneath and
+/// already parks it at its 160MHz floor — 176MHz average while the runtime
+/// ticks, 160MHz with it stopped. The radio is the part worth switching off.
+///
+/// The machine stays up, so this is reversible from software and cannot strand
+/// the device the way a failed suspend does.
+fn doze_through(helper: &std::path::Path, waking: bool) -> Result<()> {
+    let verb = if waking { "wake" } else { "doze" };
+    let status = std::process::Command::new(helper)
+        .arg(verb)
+        .status()
+        .with_context(|| format!("running {} {verb}", helper.display()))?;
+    if !status.success() {
+        bail!("{} {verb} exited with {status}", helper.display());
+    }
+    Ok(())
+}
+
+/// Stop everything until the power key comes back.
+///
+/// The guest is not ticked and the panel is not touched, so the screen holds
+/// whatever it was showing — which on e-ink costs nothing and is what the
+/// hardware does anyway. Time does not advance for the guest either; the
+/// caller reloads on the way out, and that is what puts a clock back on the
+/// right minute.
+///
+/// The key is polled four times a second rather than thirty: waking is a
+/// human action and a quarter second is under the threshold where a button
+/// feels broken, while the other twenty-nine polls were the thing being
+/// stopped.
+fn doze(
+    helper: &std::path::Path,
+    input: &mut Input,
+    terminate: &Arc<AtomicBool>,
+    longest: Duration,
+) -> Result<()> {
+    doze_through(helper, false).context("asking the device to doze")?;
+    log::info!(
+        "kobo power: dozing; the power key wakes it, and so does {}s passing",
+        longest.as_secs()
+    );
+
+    let began = Instant::now();
+    let mut pressed_at: Option<Instant> = None;
+    while !terminate.load(Ordering::Relaxed) {
+        // The way out that does not depend on the way in. Dozing takes the
+        // radio down, so a device that cannot see its own power key has no
+        // remaining channel and the user has to hold the reset — which is
+        // exactly what happened the first time this shipped without a
+        // deadline. The key is still the fast path; this is the floor.
+        if began.elapsed() >= longest {
+            doze_through(helper, true).context("waking the device")?;
+            log::warn!(
+                "kobo power: no key in {}s; waking anyway rather than sitting \
+                 somewhere nobody can reach",
+                longest.as_secs()
+            );
+            return Ok(());
+        }
+        for edge in input.poll_power()? {
+            match edge {
+                PowerKey::Pressed => pressed_at = Some(Instant::now()),
+                PowerKey::Released => {
+                    let held = pressed_at.take();
+                    // A long press means the same thing asleep as awake: give
+                    // the device back. Waking first would leave the Kobo UI
+                    // starting on a CPU pinned at 160MHz.
+                    let handing_back = held.is_some_and(|at| at.elapsed() >= POWER_LONG_PRESS);
+                    doze_through(helper, true).context("waking the device")?;
+                    if handing_back {
+                        log::info!("kobo power: held while dozing; handing the device back");
+                        terminate.store(true, Ordering::Release);
+                    } else {
+                        log::info!("kobo power: awake");
+                    }
+                    return Ok(());
+                }
+            }
+        }
+        std::thread::sleep(DOZE_POLL);
+    }
+    // Terminating out of a doze still has to undo it, or the Kobo UI comes
+    // back to a machine pinned at its slowest and no radio.
+    doze_through(helper, true).context("waking the device")?;
     Ok(())
 }
 
@@ -743,9 +896,15 @@ fn main() -> Result<()> {
     signal_hook::flag::register(SIGTERM, terminate.clone()).context("registering SIGTERM")?;
 
     match args.power_helper.as_deref() {
-        Some(helper) if helper.exists() => {
-            log::info!("kobo power: short press sleeps via {}", helper.display())
-        }
+        Some(helper) if helper.exists() => log::info!(
+            "kobo power: short press runs {} {}",
+            helper.display(),
+            match args.power_press {
+                PowerPress::Ignore => "nothing",
+                PowerPress::Doze => "doze",
+                PowerPress::Suspend => "suspend",
+            }
+        ),
         Some(helper) => log::warn!(
             "kobo power: {} is missing; a short press will do nothing",
             helper.display()
@@ -836,14 +995,24 @@ fn main() -> Result<()> {
                         log::info!("kobo power: held {held:?}; handing the device back");
                         terminate.store(true, Ordering::Release);
                     } else if let Some(helper) = args.power_helper.as_deref() {
-                        match suspend_through(helper) {
+                        let slept = match args.power_press {
+                            PowerPress::Ignore => {
+                                log::info!("kobo power: short press ignored (--power-press)");
+                                continue;
+                            }
+                            PowerPress::Suspend => suspend_through(helper),
+                            PowerPress::Doze => {
+                                doze(helper, &mut input, &terminate, args.doze_max)
+                            }
+                        };
+                        match slept {
                             // Virtual time is a frame counter, so it did not
-                            // advance while the machine was down. Reloading
+                            // advance while the machine was asleep. Reloading
                             // republishes the boot clock, which is the only
                             // way a calendar app comes back showing the right
-                            // hour. Only after a suspend that happened: a
-                            // failed one has nothing to correct, and the
-                            // redraw would be a flash for nothing.
+                            // hour. Only after a sleep that happened: a failed
+                            // one has nothing to correct, and the redraw would
+                            // be a flash for nothing.
                             Ok(()) => {
                                 reload.store(true, Ordering::Release);
                                 next_tick = Instant::now();

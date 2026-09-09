@@ -259,6 +259,38 @@ check "a third boot still has the first boot's log" "0" \
 contains "the older generation is a real log" "launcher starting" \
     "$POCKETJS_BOOT_LOG.2"
 
+echo "-- power.sh dozes and wakes --"
+# Suspend-to-RAM hangs this kernel, so dozing is what a short press gets: the
+# CPU pinned at the bottom of its range instead of the top, undone on wake.
+POWER_ROOT="$WORK/powerroot"
+POWER_DOZE_STATE="$WORK/doze.state"
+export POWER_ROOT POWER_DOZE_STATE
+FREQ="$POWER_ROOT/sys/devices/system/cpu/cpu0/cpufreq"
+mkdir -p "$FREQ" "$POWER_ROOT/sys/power"
+echo 800000 >"$FREQ/scaling_setspeed"
+echo 800000 >"$FREQ/scaling_cur_freq"
+echo 160000 >"$FREQ/scaling_min_freq"
+echo 800000 >"$FREQ/scaling_max_freq"
+echo userspace >"$FREQ/scaling_governor"
+echo "standby mem" >"$POWER_ROOT/sys/power/state"
+
+POWER_RESTORE_WIFI=0 "$DEVICE_DIR/power.sh" doze >/dev/null 2>&1
+check "dozing is recorded" "1" "$([ -f "$POWER_DOZE_STATE" ] && echo 1 || echo 0)"
+# Measured on the device: DVFS already parks the part at its floor whether or
+# not the runtime is ticking, so touching cpufreq here would be theatre.
+check "dozing leaves the cpu alone" "800000" "$(cat "$FREQ/scaling_setspeed")"
+
+check "dozing twice is harmless" "0" \
+    "$(POWER_RESTORE_WIFI=0 "$DEVICE_DIR/power.sh" doze >/dev/null 2>&1; echo $?)"
+
+POWER_RESTORE_WIFI=0 "$DEVICE_DIR/power.sh" wake >/dev/null 2>&1
+check "the doze marker is cleared" "0" \
+    "$([ -f "$POWER_DOZE_STATE" ] && echo 1 || echo 0)"
+
+check "waking when awake is harmless" "0" \
+    "$(POWER_RESTORE_WIFI=0 "$DEVICE_DIR/power.sh" wake >/dev/null 2>&1; echo $?)"
+unset POWER_ROOT POWER_DOZE_STATE
+
 echo "-- clock.sh reads a timezone --"
 # This firmware has no zoneinfo database, so the zone is a POSIX string in a
 # file on the card. Absent, UTC — never a guess at where the device is.
