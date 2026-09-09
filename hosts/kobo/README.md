@@ -10,6 +10,19 @@ The host is derived from the `hosts/kindle` e-ink host: same raw-framebuffer
 present layer, same damage/refresh policy, same evdev reader. Only the device
 contract (geometry, touch protocol, launcher) is Kobo-specific.
 
+## Where the rest of it is
+
+This file is the host's contract: what it targets and why the numbers are what
+they are. Everything about running it on a real device lives beside it.
+
+| | |
+| --- | --- |
+| [`docs/HANDOVER.md`](docs/HANDOVER.md) | **Start here to pick this up.** Environment, verification, the device procedure, and the mine field |
+| [`docs/PROGRESS.md`](docs/PROGRESS.md) | What was decided and why, which gates passed, what is still open |
+| [`docs/cookbook.md`](docs/cookbook.md) | The original runbook; some of its assumptions are stale |
+| [`tools/`](tools) | Talking to the device: a shell over telnet, network deploy, screenshots, and reading its logs off the card |
+
+
 ## Why 379×512
 
 The touch wire packs a contact as `(id << 18) | (y << 9) | x` — 9 bits per
