@@ -144,16 +144,35 @@ status_drain_stop() {
 SYNC_EVERY="${POCKETJS_SYNC_SECS:-20}"
 SYNC_PID=""
 
+# There is no sleep state on this device (docs/PROGRESS.md), so how long it
+# lasts on a charge is a real question with no answer yet. Sampling the gauge
+# beside the flush costs one file read and gives the discharge curve for free.
+BATTERY_LOG="${POCKETJS_BATTERY_LOG:-$POCKETJS_DIR/battery.log}"
+BATTERY_GAUGE="${POCKETJS_BATTERY_GAUGE:-/sys/class/power_supply/mc13892_bat}"
+BATTERY_EVERY="${POCKETJS_BATTERY_SECS:-300}"
+
 log_flush_start() {
     [ "$SYNC_EVERY" -gt 0 ] 2>/dev/null || return 0
     (
+        elapsed=0
         while :; do
             sleep "$SYNC_EVERY"
+            elapsed=$((elapsed + SYNC_EVERY))
+            if [ -r "$BATTERY_GAUGE/capacity" ] &&
+                [ "$elapsed" -ge "$BATTERY_EVERY" ]; then
+                elapsed=0
+                echo "$(date '+%F %T') $(cat "$BATTERY_GAUGE/capacity")% \
+$(cat "$BATTERY_GAUGE/status" 2>/dev/null) up$(cut -d. -f1 /proc/uptime)s" \
+                    >>"$BATTERY_LOG"
+            fi
             sync
         done
     ) >/dev/null 2>&1 &
     SYNC_PID=$!
     echo "pocketjs: flushing logs every ${SYNC_EVERY}s (pid $SYNC_PID)"
+    [ -r "$BATTERY_GAUGE/capacity" ] &&
+        echo "pocketjs: battery $(cat "$BATTERY_GAUGE/capacity")% \
+-> $BATTERY_LOG every ${BATTERY_EVERY}s"
 }
 
 log_flush_stop() {
@@ -260,13 +279,55 @@ export POCKETJS_GUI_PAUSED
 #
 #   kobo-push.py <ip> <dir> pocketjs-kobo
 #   kobo-sh.py <ip> "touch <dir>/RESTART; killall pocketjs-kobo"
+# Falling back to the Kobo UI is right for a session that never started and
+# wrong for one that ran for hours and fell over: nickel takes the panel and
+# the radio with it, so a crash at 3am reads to the owner as a dead device,
+# and every one of the four "the device froze" reports was exactly this.
+#
+# The two cases are told apart by how long the session lived. A run that
+# reached HEALTHY_SECONDS was working, so it earns the counter back and its
+# death is worth retrying; RETRY_LIMIT consecutive deaths short of that is a
+# device that cannot run this at all, and the Kobo UI is the better answer.
+#
+# One threshold, not two. An earlier version reset the counter at the same
+# short mark it used to judge a failed start, which made the limit unreachable
+# for anything that crashed just after it — a host dying every 61 seconds
+# would have retried forever.
+HEALTHY_SECONDS="${POCKETJS_HEALTHY_SECONDS:-600}"
+RETRY_LIMIT="${POCKETJS_RETRY_LIMIT:-5}"
+short_runs=0
+
 while :; do
+    began="$(date +%s 2>/dev/null || echo 0)"
     "$POCKETJS_BIN" \
         --js "$POCKETJS_JS" \
         --pak "$POCKETJS_PAK" \
         "$@" >>"$POCKETJS_LOG" 2>&1
     status=$?
-    [ -e "$POCKETJS_DIR/RESTART" ] || break
+    ended="$(date +%s 2>/dev/null || echo 0)"
+    lived=$((ended - began))
+
+    if [ ! -e "$POCKETJS_DIR/RESTART" ]; then
+        # Zero means the host decided to stop — a signal, or the long press
+        # that hands the device back. Only a failure is worth arguing with.
+        [ "$status" -eq 0 ] && break
+
+        if [ "$lived" -ge "$HEALTHY_SECONDS" ]; then
+            short_runs=1
+        else
+            short_runs=$((short_runs + 1))
+        fi
+        if [ "$short_runs" -ge "$RETRY_LIMIT" ]; then
+            echo "pocketjs: $short_runs runs in a row died inside \
+${HEALTHY_SECONDS}s; handing the device back" >&2
+            break
+        fi
+        echo "pocketjs: host exited $status after ${lived}s; restarting \
+(short runs: $short_runs/$RETRY_LIMIT)" >&2
+        echo "--- crash restart $(date 2>/dev/null) ---" >>"$POCKETJS_LOG"
+        sync
+        continue
+    fi
     # Consume it first: a restart that then fails must not loop forever.
     rm -f "$POCKETJS_DIR/RESTART"
     read_args=$(cat "$POCKETJS_DIR/RESTART.args" 2>/dev/null) || read_args=""

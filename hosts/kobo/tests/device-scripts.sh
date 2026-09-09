@@ -103,7 +103,10 @@ POCKETJS_LOCK="$WORK/pocketjs.lock"
 # The launcher sends its own output here when stdout is not a terminal, which
 # is exactly the boot case, so that is where its refusals are.
 POCKETJS_BOOT_LOG="$WORK/boot.log"
-export POCKETJS_DIR POCKETJS_LOCK POCKETJS_BOOT_LOG
+# Where the host stub records that it ran, and with what.
+RUN_COUNT="$WORK/runs"
+RUN_ARGS="$WORK/run.args"
+export POCKETJS_DIR POCKETJS_LOCK POCKETJS_BOOT_LOG RUN_COUNT RUN_ARGS
 
 await_nickel() {
     # nickel is restarted in the background; give it a moment to land.
@@ -241,6 +244,41 @@ unset POCKETJS_STDOUT
 
 mv "$WORK/pak.hidden" "$APP/app.pak"
 
+echo "-- a crash restarts the host, a failure to start does not --"
+# Handing the device to nickel is right for a session that never started and
+# wrong for one that ran and fell over: nickel takes the panel and the radio,
+# so the owner sees a dead device rather than a crash.
+cat >"$APP/pocketjs-kobo" <<'STUB'
+#!/bin/sh
+runs=$(cat "$RUN_COUNT" 2>/dev/null || echo 0)
+runs=$((runs + 1))
+echo "$runs" >"$RUN_COUNT"
+exit 1
+STUB
+chmod +x "$APP/pocketjs-kobo"
+
+: >"$RUN_COUNT"
+echo running >"$NICKEL_STATE"
+# Nothing here lives long enough to be called healthy, so this exercises both
+# halves: it retries, and a run of failures eventually gives up.
+POCKETJS_HEALTHY_SECONDS=3600 POCKETJS_RETRY_LIMIT=3 launch >/dev/null
+check "a crash is retried, up to the limit" "3" "$(cat "$RUN_COUNT")"
+contains "and says why it stopped" "handing the device back" "$POCKETJS_BOOT_LOG"
+check "and the UI comes back in the end" "running" "$(await_nickel)"
+
+# Exit zero is the host deciding to stop, not falling over.
+cat >"$APP/pocketjs-kobo" <<'STUB'
+#!/bin/sh
+runs=$(cat "$RUN_COUNT" 2>/dev/null || echo 0)
+echo "$((runs + 1))" >"$RUN_COUNT"
+exit 0
+STUB
+chmod +x "$APP/pocketjs-kobo"
+: >"$RUN_COUNT"
+echo running >"$NICKEL_STATE"
+POCKETJS_HEALTHY_SECONDS=0 launch >/dev/null
+check "a clean exit is left alone" "1" "$(cat "$RUN_COUNT")"
+
 echo "-- the log survives more than one reboot --"
 # A single .1 generation lives exactly one reboot, and the reboot after a
 # crash is rarely the last one before anybody looks: two boots spent testing
@@ -372,9 +410,6 @@ check "the UI is restored after draining" "running" "$(await_nickel)"
 echo "-- restart without a reboot --"
 # Booted from rcS, killing the host runs the exit trap and the Kobo UI comes
 # back, so trying a different waveform used to cost a reboot.
-RUN_COUNT="$WORK/runs"
-RUN_ARGS="$WORK/run.args"
-export RUN_COUNT RUN_ARGS
 cat >"$APP/pocketjs-kobo" <<'STUB'
 #!/bin/sh
 runs=$(cat "$RUN_COUNT" 2>/dev/null || echo 0)
